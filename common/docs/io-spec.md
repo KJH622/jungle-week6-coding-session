@@ -16,7 +16,7 @@
 - 첫 줄: 컬럼 헤더 (쉼표 구분)
 - 이후: 데이터 행 (쉼표 구분)
 - 행 끝: 개행문자 (`\n`)
-- 데이터가 없는 경우: 헤더만 출력
+- 데이터가 없는 경우: 출력 없음 (silent)
 
 ```
 name,age,major
@@ -26,8 +26,9 @@ name,age,major
 
 ### 에러 출력
 - stderr로 출력
-- 형식: `[ERROR] 메시지`
+- 형식: `ERROR: <message>`
 - 에러 발생 후에도 다음 SQL문은 계속 실행
+- 표준 메시지 목록은 `common/docs/error-messages.md` 참고
 
 ## 스키마 정의
 

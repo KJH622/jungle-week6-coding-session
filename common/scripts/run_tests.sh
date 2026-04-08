@@ -124,16 +124,15 @@ for sql_file in "$TEST_DIR"/*.sql; do
         fi
     fi
     
-    # --- stderr 비교 (있는 경우만, 키워드 매칭) ---
+    # --- stderr 비교 ---
     stderr_pass=true
     if [ -f "$expected_err_file" ]; then
-        while IFS= read -r expected_line; do
-            [ -z "$expected_line" ] && continue
-            if ! grep -qi "error" "$actual_stderr" 2>/dev/null; then
-                stderr_pass=false
-                break
-            fi
-        done < "$expected_err_file"
+        if ! diff -q "$expected_err_file" "$actual_stderr" > /dev/null 2>&1; then
+            stderr_pass=false
+        fi
+    elif [ -s "$actual_stderr" ]; then
+        # expected_err가 없는데 stderr가 있으면 실패 처리
+        stderr_pass=false
     fi
     
     # --- 결과 판정 ---
@@ -150,9 +149,14 @@ for sql_file in "$TEST_DIR"/*.sql; do
         fi
         
         if ! $stderr_pass; then
-            echo -e "    ${YELLOW}── stderr에 에러 메시지 없음${NC}"
-            echo -e "    ${YELLOW}   기대: $(cat "$expected_err_file" | head -3)${NC}"
-            echo -e "    ${YELLOW}   실제: $(cat "$actual_stderr" | head -3)${NC}"
+            echo -e "    ${YELLOW}── stderr 차이:${NC}"
+            if [ -f "$expected_err_file" ]; then
+                diff --color=always "$expected_err_file" "$actual_stderr" 2>/dev/null | head -20 | sed 's/^/    /'
+            else
+                echo -e "    ${YELLOW}   기대: (stderr 없음)${NC}"
+                echo -e "    ${YELLOW}   실제:${NC}"
+                sed -n '1,3p' "$actual_stderr" | sed 's/^/    /'
+            fi
         fi
         echo ""
     fi

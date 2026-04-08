@@ -1,1 +1,1 @@
--- TODO: add hidden test SQL
+SELECT * FROM users;
