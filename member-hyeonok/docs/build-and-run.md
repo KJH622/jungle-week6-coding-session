@@ -13,16 +13,25 @@ make
 ./sql_processor input.sql
 ```
 
-## 현재 단계 구현 범위
+## 현재 구현 범위
 
 - SQL 파일 전체 읽기
 - 세미콜론 기준 SQL 문장 분리
-- 빈 문장 제거
-- parser / executor 기본 인터페이스 연결
+- 빈 문장 무시
+- `INSERT INTO <table> (col1, col2, ...) VALUES (val1, val2, ...)`
+- `SELECT * FROM <table>`
+- `SELECT col1, col2, ... FROM <table>`
+- JSON 기반 `<table>.schema` 로딩
+- `<table>.data` 파일 기반 저장/조회
+- 표준 에러 메시지 출력
 
-## 다음 단계 예정
+## 현재 구현하지 않은 범위
 
-- INSERT / SELECT 실제 파싱
-- JSON 스키마 읽기
-- 파일 기반 저장 및 조회 실행
-- 표준 에러 처리 세분화
+- `CREATE TABLE`
+- `WHERE`, `ORDER BY`, 함수 호출, 표현식
+- 범용 JSON 파싱
+
+## 확인한 테스트 상태
+
+- 공개 테스트: 통과
+- hidden 테스트: 통과
