@@ -10,7 +10,6 @@
 - `insert/`: INSERT 실행/검증/에러 처리 검증
 - `select/`: SELECT 실행/출력/에러 처리 검증
 - `exit/`: 종료코드 집계/에러 출력 규칙 검증
-- `fixtures/`: 테스트 입력 파일들
 
 ## 현재 범위 (요구사항 v1 기준)
 - 실행 형식: `./sql_processor <sql_file>`
