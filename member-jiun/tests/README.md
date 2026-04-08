@@ -9,6 +9,7 @@
 - `parse/`: 문장별 파싱/에러 지속 실행 검증
 - `insert/`: INSERT 실행/검증/에러 처리 검증
 - `select/`: SELECT 실행/출력/에러 처리 검증
+- `exit/`: 종료코드 집계/에러 출력 규칙 검증
 - `fixtures/`: 테스트 입력 파일들
 
 ## 현재 범위 (요구사항 v1 기준)
@@ -26,6 +27,7 @@
 ./member-jiun/tests/parse/run_parse_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/insert/run_insert_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/select/run_select_tests.sh ./member-jiun/src/sql_processor
+./member-jiun/tests/exit/run_exit_tests.sh ./member-jiun/src/sql_processor
 ```
 
 ## 포함 케이스 (CLI)
@@ -74,3 +76,9 @@
 - 잘못된 컬럼 조회 시 `invalid query`
 - 존재하지 않는 테이블 조회 시 `table not found`
 - SELECT 에러 후 다음 문장 계속 실행
+
+## 포함 케이스 (종료 처리)
+- 전체 성공 시 종료코드 `0`
+- 에러 1건 이상 시 종료코드 `1`
+- 다중 에러 + 정상 문장 혼합 실행 시 계속 진행
+- 문장당 대표 에러 1개 출력

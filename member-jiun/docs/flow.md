@@ -77,4 +77,8 @@
 - `select_invalid_column_reports_invalid_query`
 - `select_table_not_found`
 - `select_error_does_not_stop_next_statement`
-7. 종료코드 집계 전용 세부 시나리오는 다음 테스트 단계에서 추가 예정입니다.
+7. 종료 처리 단계는 [run_exit_tests.sh](/Users/nako/jungle/wed_coding_session/jungle-week6-coding-session/member-jiun/tests/exit/run_exit_tests.sh)에서 검증합니다.
+- `exit_all_statements_success_exit_zero`
+- `exit_any_error_makes_exit_one`
+- `exit_mixed_errors_keep_running_and_exit_one`
+- `exit_one_error_message_per_statement`
