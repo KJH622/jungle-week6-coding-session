@@ -2,7 +2,7 @@ CC = cc
 CFLAGS = -Wall -Wextra -Werror -std=c11
 TARGET = sql_processor
 
-SRCS = main.c util.c sql_splitter.c parser.c executor.c schema.c error.c
+SRCS = main.c util.c sql_splitter.c parser.c executor.c schema.c error.c storage.c
 OBJS = $(SRCS:.c=.o)
 
 all: $(TARGET)

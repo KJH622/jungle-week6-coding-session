@@ -1,9 +1,9 @@
 #include "executor.h"
 
 #include "schema.h"
+#include "storage.h"
 #include "util.h"
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,55 +21,17 @@ static int find_schema_column_index(const Schema *schema, const char *column_nam
     return -1;
 }
 
-static int write_escaped_text(FILE *file, const char *text)
-{
-    const char *cursor;
-
-    /*
-     * 데이터 파일은 탭 구분 텍스트 포맷을 사용한다.
-     * 값 내부의 역슬래시, 탭, 개행은 이스케이프해서 다음 SELECT 단계가
-     * 안정적으로 역직렬화할 수 있도록 저장한다.
-     */
-    for (cursor = text; *cursor != '\0'; cursor++) {
-        if (*cursor == '\\') {
-            if (fputs("\\\\", file) == EOF) {
-                return 0;
-            }
-        } else if (*cursor == '\t') {
-            if (fputs("\\t", file) == EOF) {
-                return 0;
-            }
-        } else if (*cursor == '\n') {
-            if (fputs("\\n", file) == EOF) {
-                return 0;
-            }
-        } else {
-            if (fputc(*cursor, file) == EOF) {
-                return 0;
-            }
-        }
-    }
-
-    return 1;
-}
-
 static ExecuteResult append_insert_row(
     const InsertStatement *insert,
     const Schema *schema
 )
 {
-    char path_buffer[512];
     const SqlValue **ordered_values;
+    const char **ordered_text_values;
     size_t insert_index;
     size_t schema_index;
     int found_index;
-    FILE *file;
-    ExecuteResult result;
-
-    if (snprintf(path_buffer, sizeof(path_buffer), "%s.data", insert->table_name) >=
-        (int)sizeof(path_buffer)) {
-        return EXECUTE_FILE_ERROR;
-    }
+    StorageResult storage_result;
 
     ordered_values = (const SqlValue **)calloc(schema->column_count, sizeof(SqlValue *));
     if (ordered_values == NULL) {
@@ -103,35 +65,29 @@ static ExecuteResult append_insert_row(
         }
     }
 
-    file = fopen(path_buffer, "a");
-    if (file == NULL) {
+    ordered_text_values = (const char **)calloc(schema->column_count, sizeof(char *));
+    if (ordered_text_values == NULL) {
         free(ordered_values);
         return EXECUTE_FILE_ERROR;
     }
 
-    result = EXECUTE_SUCCESS;
     for (schema_index = 0; schema_index < schema->column_count; schema_index++) {
-        if (schema_index > 0 && fputc('\t', file) == EOF) {
-            result = EXECUTE_FILE_ERROR;
-            break;
-        }
-
-        if (!write_escaped_text(file, ordered_values[schema_index]->text)) {
-            result = EXECUTE_FILE_ERROR;
-            break;
-        }
+        ordered_text_values[schema_index] = ordered_values[schema_index]->text;
     }
 
-    if (result == EXECUTE_SUCCESS && fputc('\n', file) == EOF) {
-        result = EXECUTE_FILE_ERROR;
-    }
-
-    if (fclose(file) != 0 && result == EXECUTE_SUCCESS) {
-        result = EXECUTE_FILE_ERROR;
-    }
-
+    storage_result = append_storage_row(
+        insert->table_name,
+        ordered_text_values,
+        schema->column_count
+    );
+    free(ordered_text_values);
     free(ordered_values);
-    return result;
+
+    if (storage_result != STORAGE_SUCCESS) {
+        return EXECUTE_FILE_ERROR;
+    }
+
+    return EXECUTE_SUCCESS;
 }
 
 static ExecuteResult execute_insert_statement(const InsertStatement *insert)
@@ -216,106 +172,6 @@ static int *build_select_column_indexes(
     return indexes;
 }
 
-static int parse_escaped_field(const char **cursor, char **out_text)
-{
-    size_t capacity;
-    size_t length;
-    char *buffer;
-    char current;
-
-    capacity = 16;
-    length = 0;
-    buffer = (char *)malloc(capacity);
-    if (buffer == NULL) {
-        return 0;
-    }
-
-    while (**cursor != '\0' && **cursor != '\t' && **cursor != '\n') {
-        current = **cursor;
-        (*cursor)++;
-
-        if (current == '\\') {
-            if (**cursor == '\0') {
-                free(buffer);
-                return 0;
-            }
-
-            current = **cursor;
-            (*cursor)++;
-
-            if (current == 't') {
-                current = '\t';
-            } else if (current == 'n') {
-                current = '\n';
-            } else if (current == '\\') {
-                current = '\\';
-            } else {
-                free(buffer);
-                return 0;
-            }
-        }
-
-        if (length + 1 >= capacity) {
-            char *new_buffer;
-
-            capacity *= 2;
-            new_buffer = (char *)realloc(buffer, capacity);
-            if (new_buffer == NULL) {
-                free(buffer);
-                return 0;
-            }
-            buffer = new_buffer;
-        }
-
-        buffer[length] = current;
-        length++;
-    }
-
-    buffer[length] = '\0';
-    *out_text = buffer;
-    return 1;
-}
-
-static int parse_data_row(
-    const char *line_start,
-    size_t expected_count,
-    char ***out_fields
-)
-{
-    const char *cursor;
-    char **fields;
-    size_t index;
-
-    cursor = line_start;
-    fields = (char **)calloc(expected_count, sizeof(char *));
-    if (fields == NULL) {
-        return 0;
-    }
-
-    for (index = 0; index < expected_count; index++) {
-        if (!parse_escaped_field(&cursor, &fields[index])) {
-            free_string_array(fields, expected_count);
-            return 0;
-        }
-
-        if (index + 1 < expected_count) {
-            if (*cursor != '\t') {
-                free_string_array(fields, expected_count);
-                return 0;
-            }
-            cursor++;
-        }
-    }
-
-    if (*cursor != '\0' && *cursor != '\n') {
-        free_string_array(fields, expected_count);
-        return 0;
-    }
-
-    *out_fields = fields;
-    return 1;
-}
-
 static int print_selected_header(
     const SelectStatement *select,
     const Schema *schema,
@@ -369,14 +225,13 @@ static ExecuteResult execute_select_statement(const SelectStatement *select)
 {
     Schema schema;
     SchemaLoadResult schema_result;
-    char path_buffer[512];
-    FILE *file;
     char *data_text;
     char *cursor;
     int *selected_indexes;
     size_t selected_count;
     int printed_header;
     ExecuteResult result;
+    StorageResult storage_result;
 
     schema_result = load_schema_for_table(select->table_name, &schema);
     if (schema_result == SCHEMA_LOAD_TABLE_NOT_FOUND) {
@@ -398,26 +253,14 @@ static ExecuteResult execute_select_statement(const SelectStatement *select)
         return result;
     }
 
-    if (snprintf(path_buffer, sizeof(path_buffer), "%s.data", select->table_name) >=
-        (int)sizeof(path_buffer)) {
+    storage_result = load_storage_text(select->table_name, &data_text);
+    if (storage_result == STORAGE_NOT_FOUND) {
         free(selected_indexes);
         free_schema(&schema);
-        return EXECUTE_FILE_ERROR;
+        return EXECUTE_SUCCESS;
     }
 
-    file = fopen(path_buffer, "rb");
-    if (file == NULL) {
-        free(selected_indexes);
-        free_schema(&schema);
-        if (errno == ENOENT) {
-            return EXECUTE_SUCCESS;
-        }
-        return EXECUTE_FILE_ERROR;
-    }
-    fclose(file);
-
-    data_text = read_entire_file(path_buffer);
-    if (data_text == NULL) {
+    if (storage_result != STORAGE_SUCCESS) {
         free(selected_indexes);
         free_schema(&schema);
         return EXECUTE_FILE_ERROR;
@@ -448,7 +291,12 @@ static ExecuteResult execute_select_statement(const SelectStatement *select)
          * 실제 row가 하나라도 있을 때만 헤더를 먼저 출력한다.
          */
         if (*line_start != '\0') {
-            if (!parse_data_row(line_start, schema.column_count, &fields)) {
+            storage_result = parse_storage_row(
+                line_start,
+                schema.column_count,
+                &fields
+            );
+            if (storage_result != STORAGE_SUCCESS) {
                 result = EXECUTE_FILE_ERROR;
             } else {
                 if (!printed_header) {
