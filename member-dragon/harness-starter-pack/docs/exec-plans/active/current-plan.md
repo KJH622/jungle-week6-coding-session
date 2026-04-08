@@ -34,12 +34,14 @@
   - public 6/6 PASS via `common/scripts/run_tests.sh`
   - hidden 8/8 PASS via `common/scripts/run_tests.sh`
   - manual extended scenario PASS for `WHERE`, `ORDER BY`, `LIMIT`, `UPDATE`, `DELETE`, reordered `INSERT`
+  - parser hardening scenarios PASS for escaped quotes, value-internal semicolons, keyword-like strings, empty file, and missing final semicolon
 
 ## Review Notes
 
 - 기존 확장 계획의 가장 큰 위험은 `WHERE`와 `ORDER BY`를 projection 이후에 적용하려던 점이었다.
 - 이를 막기 위해 `StorageOps`를 `read_all_rows` / `replace_rows`로 additively 확장하고, executor가 full-row 기준 파이프라인을 담당하도록 수정했다.
 - `INSERT`는 schema 전체 컬럼을 모두 요구하되, 컬럼 순서가 달라도 재정렬해 저장하도록 확장했다.
+- 이후 parser hardening으로 escaped quote(`''`)와 bare value 경계 처리도 보강해 문자열 기반 edge case를 정리했다.
 
 ## Residual Risks
 

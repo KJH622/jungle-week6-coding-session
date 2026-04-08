@@ -169,6 +169,19 @@ cd member-dragon/playground
   - `DELETE FROM users WHERE age < 22`
   - `INSERT INTO users (major, name, age) VALUES ('수학', '정현우', 24)`
 
+## 추가 보강: 문자열 파싱 hardening
+
+- `main.c`의 statement splitter는 escaped quote(`''`)를 문자열 종료로 오인하지 않도록 보강했다.
+- `parser.c`는 quoted string에서 `''`를 실제 작은따옴표 1개로 복원한다.
+- bare value는 공백, `,`, `)`, `;`에서 멈추도록 바꿔 `WHERE age > 22 ORDER BY ...` 같은 절 경계가 안전해졌다.
+- 이 보강 후에도 public/hidden 회귀 테스트는 유지했고, 아래 케이스를 수동 검증했다.
+  - 마지막 문장 세미콜론 없음
+  - 값 내부 SQL 키워드
+  - 빈 파일
+  - 값 내부 세미콜론
+  - `O''Reilly`
+  - `WHERE ... ORDER BY ... LIMIT ...`
+
 ## 이번 범위에서 제외한 것
 
 - `JOIN`

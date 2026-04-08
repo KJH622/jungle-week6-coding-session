@@ -20,33 +20,72 @@ static int has_non_whitespace(const char *text) {
     return 0;
 }
 
+/* SQL 문장을 읽는 동안 문자 1개를 버퍼에 붙입니다.
+   버퍼가 꽉 찬 뒤에도 문장 끝은 찾아야 하므로,
+   overflow가 나면 저장만 멈추고 읽기는 계속 진행합니다. */
+static void append_statement_char(char *buffer, size_t buffer_size,
+                                  size_t *len, int *overflow, int ch) {
+    if (*overflow) {
+        return;
+    }
+
+    if (*len + 1 < buffer_size) {
+        buffer[*len] = (char)ch;
+        (*len)++;
+        return;
+    }
+
+    *overflow = 1;
+}
+
 /* 파일에서 SQL 문장 1개만 읽어옵니다.
    문장은 세미콜론(;)에서 끝나지만,
-   작은따옴표 안에 있는 세미콜론은 데이터이므로 문장 끝으로 보면 안 됩니다. */
+   작은따옴표 안에 있는 세미콜론은 데이터이므로 문장 끝으로 보면 안 됩니다.
+   또한 SQL 문자열 안의 escaped quote(`''`)는 문자열 종료가 아니라
+   값 안의 작은따옴표 1개로 취급해야 합니다. */
 static int read_next_statement(FILE *fp, char *buffer, size_t buffer_size) {
     int ch;
     int in_quote = 0;
     int overflow = 0;
+    int pushed_ch = EOF;
     size_t len = 0;
 
-    while ((ch = fgetc(fp)) != EOF) {
-        /* 버퍼가 꽉 차기 전까지는 문자를 계속 저장합니다.
-           버퍼가 꽉 찬 뒤에도 문장 끝을 찾기 위해 파일은 계속 읽습니다. */
-        if (!overflow) {
-            if (len + 1 < buffer_size) {
-                buffer[len++] = (char)ch;
-            } else {
-                overflow = 1;
-            }
+    for (;;) {
+        if (pushed_ch != EOF) {
+            ch = pushed_ch;
+            pushed_ch = EOF;
+        } else {
+            ch = fgetc(fp);
         }
 
-        /* 작은따옴표를 만나면 지금이 문자열 안인지 밖인지 상태를 바꿉니다. */
+        if (ch == EOF) {
+            break;
+        }
+
+        append_statement_char(buffer, buffer_size, &len, &overflow, ch);
+
+        /* 작은따옴표를 만나면 문자열 시작/종료를 판단합니다.
+           단, 문자열 안에서 ''가 나오면 escaped quote이므로
+           아직 문자열이 끝난 것이 아닙니다. */
         if (ch == '\'') {
-            in_quote = !in_quote;
+            if (!in_quote) {
+                in_quote = 1;
+                continue;
+            }
+
+            ch = fgetc(fp);
+            if (ch == '\'') {
+                append_statement_char(buffer, buffer_size, &len, &overflow, ch);
+                continue;
+            }
+
+            in_quote = 0;
+            pushed_ch = ch;
+            continue;
         }
 
         /* 세미콜론은 작은따옴표 밖에 있을 때만 문장의 끝입니다. */
-        if (ch == ';' && !in_quote) {
+        if (!in_quote && ch == ';') {
             break;
         }
     }

@@ -34,3 +34,10 @@
 - **AI가 준 답**: schema 인덱스 기준 `seen[]` 배열을 두고, 이미 채운 컬럼이 다시 나오면 바로 `invalid query`로 처리하자고 제안했다.
 - **실제 해결**: `executor.c`의 reorder 단계에서 중복 컬럼과 누락 컬럼을 모두 검사하도록 바꿨다.
 - **배운 것**: "재정렬" 기능은 편의성만 늘리는 게 아니라, 잘못된 입력을 더 꼼꼼히 검증해야 한다.
+
+## 이슈 6: 문자열 파싱이 `O''Reilly`와 절 경계를 제대로 처리하지 못했음
+- **상황**: `O''Reilly` 같은 SQL escaped quote는 `invalid query`가 났고, `WHERE age > 22 ORDER BY age DESC LIMIT 2`처럼 따옴표 없는 값 뒤 절이 붙는 경우엔 뒷부분이 값으로 빨려 들어갈 수 있었다.
+- **원인**: `main.c`의 statement splitter는 작은따옴표를 볼 때마다 단순히 in/out 상태만 뒤집었고, `parser.c`의 `parse_value_token()`은 quoted string의 `''`를 이해하지 못했다. 또 unquoted value는 공백에서 멈추지 않아 다음 절을 삼킬 수 있었다.
+- **AI가 준 답**: statement 분리와 quoted string 읽기를 둘 다 문자 단위 scanner로 바꾸고, `''`는 값 안의 작은따옴표 1개로 처리하자고 제안했다. bare value는 공백/구분자에서 멈추도록 하자는 방향도 함께 제시했다.
+- **실제 해결**: `main.c`에서 escaped quote를 고려한 quote-aware statement splitter를 넣고, `parser.c`에 `parse_quoted_value()`를 추가해 `''`를 지원했다. unquoted value는 공백, `,`, `)`, `;`에서 멈추도록 바꿨다.
+- **배운 것**: SQL 파싱은 "따옴표 안 문자열"과 "문장/절 경계"를 같이 봐야 안전하다. 한쪽만 고치면 다른 쪽에서 다시 깨질 수 있다.

@@ -65,11 +65,13 @@ UPDATE <table> SET <col> = <value>[, <col> = <value>] WHERE <col> <op> <value>;
 ```sql
 INSERT INTO users (name, age, major) VALUES ('김민준', 25, '컴퓨터공학');
 INSERT INTO users (major, name, age) VALUES ('수학', '정현우', 24);
+INSERT INTO users (name, age, major) VALUES ('O''Reilly', 30, 'Books');
 ```
 
 - schema의 모든 컬럼을 넣어야 합니다.
 - 컬럼 순서는 달라도 됩니다.
 - 중복 컬럼, 없는 컬럼, 누락 컬럼은 에러입니다.
+- quoted string 안의 작은따옴표는 SQL 방식대로 `''`로 escape할 수 있습니다.
 
 ### SELECT
 
@@ -105,6 +107,7 @@ UPDATE users SET age = 26, major = '수학';
 
 - `WHERE`는 조건 1개만 지원합니다.
 - 지원 연산자: `=`, `!=`, `>`, `<`, `>=`, `<=`
+- 따옴표가 없는 값은 공백이나 다음 절이 나오기 전까지만 읽습니다.
 - `ORDER BY`는 컬럼 1개만 지원합니다.
 - 정렬 방향은 `ASC`, `DESC`를 지원하고, 생략하면 기본값은 `ASC`입니다.
 - `LIMIT`은 정수 1개만 지원합니다.
@@ -189,6 +192,9 @@ cd member-dragon/playground
 
 - 파일: `member-dragon/playground/phase2_keywords.sql`
 - 기대 출력: `member-dragon/playground/phase2_keywords.expected.txt`
+- 문자열 파싱 엣지케이스: `member-dragon/playground/parser_edge_cases.sql`
+- 문자열 파싱 기대 출력: `member-dragon/playground/parser_edge_cases.expected.txt`
+- 빈 파일 케이스: `member-dragon/playground/empty.sql`
 
 실행:
 
@@ -217,6 +223,20 @@ cd member-dragon/playground
 ../src/sql_processor phase2_keywords.sql > out.txt 2> err.txt
 diff -u phase2_keywords.expected.txt out.txt
 cat err.txt
+```
+
+문자열 파싱 전용 케이스를 보려면:
+
+```bash
+cd member-dragon/playground
+./reset.sh
+../src/sql_processor parser_edge_cases.sql > out.txt 2> err.txt
+diff -u parser_edge_cases.expected.txt out.txt
+cat err.txt
+
+../src/sql_processor empty.sql > empty.out 2> empty.err
+cat empty.out
+cat empty.err
 ```
 
 ## 정리

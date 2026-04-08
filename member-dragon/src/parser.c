@@ -124,29 +124,56 @@ static int parse_parenthesized_identifiers(const char **cursor,
     }
 }
 
-/* VALUES 목록에서 값 1개를 읽습니다.
-   작은따옴표 문자열과 일반 숫자 둘 다 처리합니다. */
+/* 작은따옴표 문자열을 읽습니다.
+   SQL의 escaped quote(`''`)는 실제 값 안의 작은따옴표 1개로 바꿔 저장합니다. */
+static int parse_quoted_value(const char **cursor, char *out, size_t out_size) {
+    const char *text = *cursor;
+    size_t len = 0;
+
+    if (*text != '\'') {
+        return -1;
+    }
+    text++;
+
+    while (*text != '\0') {
+        if (*text == '\'') {
+            /* ''는 문자열 종료가 아니라 값 안의 작은따옴표입니다. */
+            if (text[1] == '\'') {
+                if (len + 1 >= out_size) {
+                    return -1;
+                }
+                out[len++] = '\'';
+                text += 2;
+                continue;
+            }
+
+            out[len] = '\0';
+            *cursor = text + 1;
+            return 0;
+        }
+
+        if (len + 1 >= out_size) {
+            return -1;
+        }
+
+        out[len++] = *text;
+        text++;
+    }
+
+    return -1;
+}
+
+/* VALUES/WHERE/SET에서 값 1개를 읽습니다.
+   quoted string은 escaped quote까지 처리하고,
+   unquoted value는 공백이나 다음 구분자를 만나면 끝난 것으로 봅니다. */
 static int parse_value_token(const char **cursor, char *out, size_t out_size) {
     const char *text = skip_spaces(*cursor);
 
-    /* 작은따옴표 안의 값은 공백이나 쉼표를 포함할 수 있으므로
-       닫는 따옴표가 나올 때까지 통째로 읽습니다. */
     if (*text == '\'') {
-        const char *end = strchr(text + 1, '\'');
-        size_t len;
-
-        if (end == NULL) {
+        if (parse_quoted_value(&text, out, out_size) != 0) {
             return -1;
         }
-
-        len = (size_t)(end - (text + 1));
-        if (len >= out_size) {
-            return -1;
-        }
-
-        memcpy(out, text + 1, len);
-        out[len] = '\0';
-        *cursor = end + 1;
+        *cursor = text;
         return 0;
     }
 
@@ -155,8 +182,14 @@ static int parse_value_token(const char **cursor, char *out, size_t out_size) {
         char token[MAX_VALUE_LEN];
         size_t len;
 
-        /* 따옴표가 없는 값은 쉼표나 닫는 괄호 전까지만 읽습니다. */
-        while (*end != '\0' && *end != ',' && *end != ')') {
+        /* 따옴표가 없는 값은 공백, 쉼표, 닫는 괄호, 세미콜론 전까지만 읽습니다.
+           이렇게 해야 WHERE age > 22 ORDER BY ... 에서
+           22 뒤의 ORDER BY가 값 안으로 잘못 들어가지 않습니다. */
+        while (*end != '\0' &&
+               !isspace((unsigned char)*end) &&
+               *end != ',' &&
+               *end != ')' &&
+               *end != ';') {
             end++;
         }
 

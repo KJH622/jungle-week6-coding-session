@@ -1,0 +1,8 @@
+name,age,major
+O'Reilly,30,Books
+name,age
+O'Reilly,31
+정현우,24
+name,price,category
+세미;콜론,1200,cat;egory
+SELECT FROM WHERE LIMIT,1000,keyword test

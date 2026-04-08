@@ -17,6 +17,7 @@
 - [x] `DELETE FROM table;` 와 `DELETE FROM table WHERE ...;` 를 지원한다.
 - [x] `UPDATE table SET ...;` 와 `UPDATE table SET ... WHERE ...;` 를 지원한다.
 - [x] 새 기능도 기존 exact error strings 4개 안에서 처리한다.
+- [x] SQL 문자열의 escaped quote(`''`)와 값 내부 세미콜론을 안전하게 처리한다.
 
 ## Constraints
 
