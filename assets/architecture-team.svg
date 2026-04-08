@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 620" role="img" style="width:100%;max-width:700px;">
+  <title>SQL 처리기 아키텍처</title>
+  <desc>SQL 파일이 분리, 파싱, 실행, 스토리지, 페이지, 버퍼 캐시를 거쳐 출력되는 파이프라인</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#888780"/>
+    </marker>
+    <style>
+      @media (prefers-color-scheme: light) {
+        .box-input { fill: #E6F1FB; stroke: #85B7EB; }
+        .box-parse { fill: #EEEDFE; stroke: #AFA9EC; }
+        .box-exec { fill: #EEEDFE; stroke: #AFA9EC; }
+        .box-storage { fill: #E1F5EE; stroke: #5DCAA5; }
+        .box-page { fill: #E1F5EE; stroke: #5DCAA5; }
+        .box-cache { fill: #FAEEDA; stroke: #FAC775; }
+        .box-out { fill: #F1EFE8; stroke: #B4B2A9; }
+        .t-input { fill: #0C447C; }
+        .t-parse { fill: #3C3489; }
+        .t-exec { fill: #3C3489; }
+        .t-storage { fill: #085041; }
+        .t-page { fill: #085041; }
+        .t-cache { fill: #633806; }
+        .t-out { fill: #444441; }
+        .ts { fill: #5F5E5A; }
+        .t-label { fill: #888780; }
+        .line { stroke: #B4B2A9; }
+        .bracket { fill: none; stroke: #D3D1C7; }
+        .zone-label { fill: #888780; }
+      }
+      @media (prefers-color-scheme: dark) {
+        .box-input { fill: #042C53; stroke: #378ADD; }
+        .box-parse { fill: #26215C; stroke: #7F77DD; }
+        .box-exec { fill: #26215C; stroke: #7F77DD; }
+        .box-storage { fill: #04342C; stroke: #1D9E75; }
+        .box-page { fill: #04342C; stroke: #1D9E75; }
+        .box-cache { fill: #412402; stroke: #EF9F27; }
+        .box-out { fill: #2C2C2A; stroke: #888780; }
+        .t-input { fill: #B5D4F4; }
+        .t-parse { fill: #CECBF6; }
+        .t-exec { fill: #CECBF6; }
+        .t-storage { fill: #9FE1CB; }
+        .t-page { fill: #9FE1CB; }
+        .t-cache { fill: #FAC775; }
+        .t-out { fill: #D3D1C7; }
+        .ts { fill: #B4B2A9; }
+        .t-label { fill: #888780; }
+        .line { stroke: #5F5E5A; }
+        .bracket { fill: none; stroke: #444441; }
+        .zone-label { fill: #5F5E5A; }
+      }
+      text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    </style>
+  </defs>
+
+  <!-- Zone: 입력 처리 -->
+  <rect class="bracket" x="195" y="10" width="310" height="185" rx="12" stroke-width="1" stroke-dasharray="6,4"/>
+  <text class="zone-label" x="210" y="30" font-size="11">입력 처리</text>
+
+  <!-- SQL 파일 -->
+  <rect class="box-input" x="225" y="40" width="250" height="55" rx="8" stroke-width="1.5"/>
+  <text class="t-input" x="350" y="64" text-anchor="middle" font-size="16" font-weight="500">SQL 파일</text>
+  <text class="ts" x="350" y="82" text-anchor="middle" font-size="12">여러 SQL문이 담긴 텍스트</text>
+
+  <!-- 화살표 -->
+  <line class="line" x1="350" y1="95" x2="350" y2="125" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="t-label" x="365" y="115" font-size="11">문장 분리</text>
+
+  <!-- SQL 문장 분리 -->
+  <rect class="box-input" x="225" y="130" width="250" height="55" rx="8" stroke-width="1.5"/>
+  <text class="t-input" x="350" y="154" text-anchor="middle" font-size="16" font-weight="500">문장 분리</text>
+  <text class="ts" x="350" y="172" text-anchor="middle" font-size="12">세미콜론 기준으로 SQL문 분리</text>
+
+  <!-- Zone: 해석 -->
+  <rect class="bracket" x="195" y="205" width="310" height="100" rx="12" stroke-width="1" stroke-dasharray="6,4"/>
+  <text class="zone-label" x="210" y="225" font-size="11">해석</text>
+
+  <!-- 화살표 -->
+  <line class="line" x1="350" y1="185" x2="350" y2="235" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="t-label" x="365" y="215" font-size="11">개별 SQL문</text>
+
+  <!-- 파싱 → AST -->
+  <rect class="box-parse" x="225" y="240" width="250" height="55" rx="8" stroke-width="1.5"/>
+  <text class="t-parse" x="350" y="264" text-anchor="middle" font-size="16" font-weight="500">파싱 → AST</text>
+  <text class="ts" x="350" y="282" text-anchor="middle" font-size="12">SQL을 구문 트리로 변환</text>
+
+  <!-- 화살표 -->
+  <line class="line" x1="350" y1="295" x2="350" y2="330" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="t-label" x="365" y="318" font-size="11">AST</text>
+
+  <!-- Zone: 실행 + 저장 -->
+  <rect class="bracket" x="195" y="315" width="310" height="210" rx="12" stroke-width="1" stroke-dasharray="6,4"/>
+  <text class="zone-label" x="210" y="335" font-size="11">실행 + 저장</text>
+
+  <!-- 실행 -->
+  <rect class="box-exec" x="225" y="345" width="250" height="55" rx="8" stroke-width="1.5"/>
+  <text class="t-exec" x="350" y="369" text-anchor="middle" font-size="16" font-weight="500">실행</text>
+  <text class="ts" x="350" y="387" text-anchor="middle" font-size="12">INSERT / SELECT 동작 수행</text>
+
+  <!-- 화살표 -->
+  <line class="line" x1="350" y1="400" x2="350" y2="425" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 스토리지 + 페이지 + 버퍼캐시를 하나의 블록으로 -->
+  <rect class="box-storage" x="225" y="430" width="250" height="85" rx="8" stroke-width="1.5"/>
+  <text class="t-storage" x="350" y="454" text-anchor="middle" font-size="16" font-weight="500">스토리지 엔진</text>
+  <text class="ts" x="350" y="474" text-anchor="middle" font-size="12">페이지 단위(4096B) 관리</text>
+  <text class="ts" x="350" y="492" text-anchor="middle" font-size="12">버퍼 캐시로 성능 최적화</text>
+
+  <!-- 분기 화살표 -->
+  <path class="line" d="M 280 515 L 280 545 L 170 545 L 170 565" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <text class="t-label" x="200" y="540" font-size="12">SELECT</text>
+
+  <path class="line" d="M 420 515 L 420 545 L 530 545 L 530 565" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <text class="t-label" x="460" y="540" font-size="12">INSERT</text>
+
+  <!-- stdout -->
+  <rect class="box-cache" x="90" y="570" width="160" height="35" rx="6" stroke-width="1.5"/>
+  <text class="t-cache" x="170" y="593" text-anchor="middle" font-size="14" font-weight="500">화면 출력</text>
+
+  <!-- .data 파일 -->
+  <rect class="box-out" x="450" y="570" width="160" height="35" rx="6" stroke-width="1.5"/>
+  <text class="t-out" x="530" y="593" text-anchor="middle" font-size="14" font-weight="500">.data 파일</text>
+
+</svg>
