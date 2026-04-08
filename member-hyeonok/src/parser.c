@@ -446,18 +446,18 @@ static int parse_select_statement(const char *sql_text, SqlStatement *statement)
     return 1;
 }
 
-int parse_sql_statement(const char *sql_text, SqlStatement *statement)
+ParseResult parse_query(const char *sql_text, SqlStatement *statement)
 {
     const char *cursor;
 
     if (sql_text == NULL || statement == NULL) {
-        return 0;
+        return PARSE_INTERNAL_ERROR;
     }
 
     initialize_statement(statement);
     statement->raw_sql = duplicate_string(sql_text);
     if (statement->raw_sql == NULL) {
-        return 0;
+        return PARSE_INTERNAL_ERROR;
     }
 
     cursor = sql_text;
@@ -465,9 +465,9 @@ int parse_sql_statement(const char *sql_text, SqlStatement *statement)
         cursor = sql_text;
         if (!parse_insert_statement(cursor, statement)) {
             free_sql_statement(statement);
-            return 0;
+            return PARSE_INVALID_QUERY;
         }
-        return 1;
+        return PARSE_SUCCESS;
     }
 
     cursor = sql_text;
@@ -475,11 +475,22 @@ int parse_sql_statement(const char *sql_text, SqlStatement *statement)
         cursor = sql_text;
         if (!parse_select_statement(cursor, statement)) {
             free_sql_statement(statement);
-            return 0;
+            return PARSE_INVALID_QUERY;
         }
+        return PARSE_SUCCESS;
     }
 
-    return 1;
+    /*
+     * 현재 지원하는 문장은 INSERT 와 SELECT 뿐이므로,
+     * 시작 키워드를 판별하지 못하면 곧바로 invalid query 로 본다.
+     */
+    free_sql_statement(statement);
+    return PARSE_INVALID_QUERY;
+}
+
+int parse_sql_statement(const char *sql_text, SqlStatement *statement)
+{
+    return parse_query(sql_text, statement) == PARSE_SUCCESS;
 }
 
 void free_sql_statement(SqlStatement *statement)

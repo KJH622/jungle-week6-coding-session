@@ -30,12 +30,23 @@ static int process_sql_file(const char *sql_path)
 
     for (index = 0; index < statements.count; index++) {
         SqlStatement statement;
+        ParseResult parse_result;
 
         /*
          * 빈 문장은 splitter 단계에서 제거되므로,
          * 여기서는 실제 SQL 문장만 순차적으로 parser / executor 에 넘긴다.
          */
-        if (!parse_sql_statement(statements.items[index], &statement)) {
+        parse_result = parse_query(statements.items[index], &statement);
+        if (parse_result != PARSE_SUCCESS) {
+            /*
+             * 문법 오류와 내부 오류를 호출부에서 구분할 수 있게 해 두고,
+             * 현재 단계에서는 팀 공통 규칙에 맞는 표준 에러 문구로 연결한다.
+             */
+            if (parse_result == PARSE_INVALID_QUERY) {
+                fprintf(stderr, "ERROR: invalid query\n");
+            } else {
+                fprintf(stderr, "ERROR: file open failed\n");
+            }
             had_error = 1;
             continue;
         }
