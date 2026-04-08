@@ -53,3 +53,14 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# SQL Processor project
+sql_processor
+*.csv
+*.dat
+*.db
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
