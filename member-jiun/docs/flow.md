@@ -63,3 +63,10 @@
 - `parse_invalid_query_continues_to_next_statement`
 - `parse_multiple_invalid_statements_report_per_statement`
 5. INSERT/SELECT 상세 처리(테이블/컬럼 검증, 저장/조회 포맷)는 다음 테스트 단계에서 추가 예정입니다.
+5. INSERT 처리 단계는 [run_insert_tests.sh](/Users/nako/jungle/wed_coding_session/jungle-week6-coding-session/member-jiun/tests/insert/run_insert_tests.sh)에서 검증합니다.
+- `insert_success_is_silent_and_appended`
+- `insert_table_not_found`
+- `insert_column_value_mismatch`
+- `insert_preserves_spaces_and_comma_in_quoted_values`
+- `insert_error_does_not_stop_next_statements`
+6. SELECT 상세 처리와 종료코드 집계 세부 시나리오는 다음 테스트 단계에서 추가 예정입니다.
