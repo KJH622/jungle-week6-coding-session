@@ -33,7 +33,6 @@ run_case() {
 }
 
 case_missing_file() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -57,7 +56,6 @@ case_missing_file() {
 }
 
 case_directory_path() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -81,7 +79,6 @@ case_directory_path() {
 }
 
 case_permission_denied_file() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'chmod 644 "$tmp/input.sql" 2>/dev/null || true; rm -rf "$tmp"' RETURN
 
@@ -110,7 +107,6 @@ EOF
 }
 
 case_empty_sql_file() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -132,7 +128,6 @@ case_empty_sql_file() {
 }
 
 case_no_args_should_fail() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -156,7 +151,6 @@ case_no_args_should_fail() {
 }
 
 case_too_many_args_should_fail() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 

@@ -64,7 +64,6 @@ run_sql_and_assert() {
   local expected_stderr="$3"
   local expected_code="$4"
 
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 

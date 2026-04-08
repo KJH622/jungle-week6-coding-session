@@ -59,7 +59,6 @@ SCHEMA_PRODUCTS
 }
 
 case_init_with_required_schema_success() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -88,7 +87,6 @@ EOF_SQL
 }
 
 case_init_missing_users_schema_should_fail() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -126,7 +124,6 @@ EOF_SQL
 }
 
 case_init_missing_products_schema_should_fail() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -164,7 +161,6 @@ EOF_SQL
 }
 
 case_init_malformed_schema_should_fail() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -206,7 +202,6 @@ EOF_SQL
 }
 
 case_init_unreadable_schema_should_fail() {
-  local tmp
   tmp="$(mktemp -d)"
   trap 'chmod 644 "$tmp/users.schema" 2>/dev/null || true; rm -rf "$tmp"' RETURN
 

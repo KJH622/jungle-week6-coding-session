@@ -62,7 +62,6 @@ run_sql_and_assert() {
   local sql_content="$1"
   local expected_stdout="$2"
 
-  local tmp
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
