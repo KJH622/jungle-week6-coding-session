@@ -311,6 +311,21 @@ SqlStatus storage_flush(StorageEngine *engine)
     return buffer_cache_flush_all(&engine->cache);
 }
 
+void storage_get_cache_stats(
+    const StorageEngine *engine,
+    uint64_t *hit_count,
+    uint64_t *miss_count,
+    uint64_t *dirty_pages,
+    uint64_t *flush_count
+)
+{
+    if (engine == NULL) {
+        return;
+    }
+
+    buffer_cache_get_stats(&engine->cache, hit_count, miss_count, dirty_pages, flush_count);
+}
+
 /* RowData가 소유한 값 배열을 해제한다. */
 void row_data_destroy(RowData *row)
 {

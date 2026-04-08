@@ -23,6 +23,9 @@ typedef struct BufferFrame {
 typedef struct BufferCache {
     BufferFrame frames[BUFFER_CACHE_CAPACITY];
     uint64_t tick;
+    uint64_t hit_count;
+    uint64_t miss_count;
+    uint64_t flush_count;
 } BufferCache;
 
 void buffer_cache_init(BufferCache *cache);
@@ -31,5 +34,12 @@ SqlStatus buffer_cache_create_page(BufferCache *cache, const char *file_path, ui
 void buffer_cache_mark_dirty(BufferCache *cache, const char *file_path, uint32_t page_id);
 SqlStatus buffer_cache_flush_file(BufferCache *cache, const char *file_path);
 SqlStatus buffer_cache_flush_all(BufferCache *cache);
+void buffer_cache_get_stats(
+    const BufferCache *cache,
+    uint64_t *hit_count,
+    uint64_t *miss_count,
+    uint64_t *dirty_pages,
+    uint64_t *flush_count
+);
 
 #endif

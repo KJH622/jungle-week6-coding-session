@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -67,6 +68,45 @@ static void print_error(FILE *error_stream, SqlStatus status)
     fprintf(error_stream, "ERROR: %s\n", sql_status_message(status));
 }
 
+/* 환경변수로 지정된 경로에 캐시 통계를 JSON으로 기록한다. */
+static void write_cache_stats_file(const ExecutionContext *context)
+{
+    const char *stats_path;
+    FILE *file;
+    uint64_t hit_count;
+    uint64_t miss_count;
+    uint64_t dirty_pages;
+    uint64_t flush_count;
+
+    stats_path = getenv("SQL_PROCESSOR_CACHE_STATS_PATH");
+    if (stats_path == NULL || *stats_path == '\0') {
+        return;
+    }
+
+    storage_get_cache_stats(
+        &context->storage,
+        &hit_count,
+        &miss_count,
+        &dirty_pages,
+        &flush_count
+    );
+
+    file = fopen(stats_path, "wb");
+    if (file == NULL) {
+        return;
+    }
+
+    fprintf(
+        file,
+        "{\"hit\":%llu,\"miss\":%llu,\"dirtyPages\":%llu,\"flushCount\":%llu}\n",
+        (unsigned long long)hit_count,
+        (unsigned long long)miss_count,
+        (unsigned long long)dirty_pages,
+        (unsigned long long)flush_count
+    );
+    fclose(file);
+}
+
 /* 프로그램 진입점: 파일 읽기, 파싱, 실행, flush까지 전체 흐름을 처리한다. */
 int main(int argc, char **argv)
 {
@@ -125,6 +165,7 @@ int main(int argc, char **argv)
         had_error = true;
     }
 
+    write_cache_stats_file(&context);
     execution_context_destroy(&context);
     free_statement_list(statements, statement_count);
     free(sql_text);

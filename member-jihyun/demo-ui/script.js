@@ -1,9 +1,23 @@
 const templates = {
   insert: [
     "INSERT INTO users (name, age, major) VALUES ('김민준', 25, '컴퓨터공학');",
-    "INSERT INTO users (name, age, major) VALUES ('이서연', 22, '경영학');"
+    "INSERT INTO users (name, age, major) VALUES ('이서연', 22, '경영학');",
+    "INSERT INTO users (name, age, major) VALUES ('SELECT', 28, '데이터사이언스');",
+    "",
+    "INSERT INTO products (name, category, price) VALUES ('맥북프로', '노트북', 3200000);",
+    "INSERT INTO products (name, category, price) VALUES ('무선마우스', '주변기기', 39000);",
+    "INSERT INTO products (name, category, price) VALUES ('할인키보드', '주변기기', -5000);"
   ].join("\n"),
-  select: "SELECT name, age FROM users;",
+  select: [
+    "SELECT * FROM users;",
+    "SELECT name, age FROM users;",
+    "",
+    "SELECT * FROM products;",
+    "SELECT name, price FROM products;",
+    "",
+    "SELECT name FROM users;",
+    "SELECT category FROM products;"
+  ].join("\n"),
   error: "SELECT unknown_col FROM users;"
 };
 
@@ -18,17 +32,17 @@ const clearLogBtn = document.getElementById("clearLogBtn");
 const toastContainer = document.getElementById("toastContainer");
 const eventLogList = document.getElementById("eventLogList");
 
-const runtimeConnectionEl = document.getElementById("runtimeConnection");
-const runtimeBinaryEl = document.getElementById("runtimeBinary");
-const runtimeExitCodeEl = document.getElementById("runtimeExitCode");
-const runtimeDirEl = document.getElementById("runtimeDir");
+const cacheHitEl = document.getElementById("cacheHit");
+const cacheMissEl = document.getElementById("cacheMiss");
+const dirtyPagesEl = document.getElementById("dirtyPages");
+const flushCountEl = document.getElementById("flushCount");
 
-const usersFileExistsEl = document.getElementById("usersFileExists");
 const usersPageCountEl = document.getElementById("usersPageCount");
-const usersFileSizeEl = document.getElementById("usersFileSize");
-const productsFileExistsEl = document.getElementById("productsFileExists");
+const usersRowCountEl = document.getElementById("usersRowCount");
+const usersLastUsedBytesEl = document.getElementById("usersLastUsedBytes");
 const productsPageCountEl = document.getElementById("productsPageCount");
-const productsFileSizeEl = document.getElementById("productsFileSize");
+const productsRowCountEl = document.getElementById("productsRowCount");
+const productsLastUsedBytesEl = document.getElementById("productsLastUsedBytes");
 
 function nowTime() {
   const d = new Date();
@@ -75,21 +89,29 @@ function setText(el, value) {
 }
 
 function renderRuntimeState(state, connected) {
-  setText(runtimeConnectionEl, connected ? "connected" : "offline");
-  setText(runtimeBinaryEl, state?.binaryReady ? "ready" : "missing");
-  setText(runtimeExitCodeEl, state?.lastExitCode ?? "-");
-  setText(runtimeDirEl, state?.runtimeDir ?? "-");
+  const cache = state?.cacheStats;
+  if (connected && cache) {
+    setText(cacheHitEl, cache.hit ?? 0);
+    setText(cacheMissEl, cache.miss ?? 0);
+    setText(dirtyPagesEl, cache.dirtyPages ?? 0);
+    setText(flushCountEl, cache.flushCount ?? 0);
+  } else {
+    setText(cacheHitEl, "-");
+    setText(cacheMissEl, "-");
+    setText(dirtyPagesEl, "-");
+    setText(flushCountEl, "-");
+  }
 
   const users = state?.dataFiles?.users;
   const products = state?.dataFiles?.products;
 
-  setText(usersFileExistsEl, users?.exists ? "yes" : "no");
   setText(usersPageCountEl, users?.pageCount ?? 0);
-  setText(usersFileSizeEl, users?.sizeBytes ?? 0);
+  setText(usersRowCountEl, users?.rowCount ?? 0);
+  setText(usersLastUsedBytesEl, users?.lastPageUsedBytes ?? 0);
 
-  setText(productsFileExistsEl, products?.exists ? "yes" : "no");
   setText(productsPageCountEl, products?.pageCount ?? 0);
-  setText(productsFileSizeEl, products?.sizeBytes ?? 0);
+  setText(productsRowCountEl, products?.rowCount ?? 0);
+  setText(productsLastUsedBytesEl, products?.lastPageUsedBytes ?? 0);
 }
 
 async function fetchJson(url, options = {}) {

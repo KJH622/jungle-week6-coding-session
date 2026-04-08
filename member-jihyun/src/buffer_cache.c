@@ -10,7 +10,7 @@ static bool frame_matches(const BufferFrame *frame, const char *file_path, uint3
 }
 
 /* dirty 프레임을 원본 파일의 해당 페이지 위치에 기록한다. */
-static SqlStatus flush_frame(BufferFrame *frame)
+static SqlStatus flush_frame(BufferCache *cache, BufferFrame *frame)
 {
     FILE *file;
     long offset;
@@ -42,6 +42,7 @@ static SqlStatus flush_frame(BufferFrame *frame)
     }
 
     frame->dirty = false;
+    cache->flush_count += 1U;
     return SQL_STATUS_OK;
 }
 
@@ -80,7 +81,7 @@ static BufferFrame *choose_victim(BufferCache *cache, SqlStatus *status)
         }
     }
 
-    *status = flush_frame(victim);
+    *status = flush_frame(cache, victim);
     return *status == SQL_STATUS_OK ? victim : NULL;
 }
 
@@ -112,9 +113,11 @@ SqlStatus buffer_cache_load_page(BufferCache *cache, const char *file_path, uint
 
     frame = find_frame(cache, file_path, page_id);
     if (frame != NULL) {
+        cache->hit_count += 1U;
         *out_page = &frame->page;
         return SQL_STATUS_OK;
     }
+    cache->miss_count += 1U;
 
     frame = choose_victim(cache, &status);
     if (frame == NULL) {
@@ -152,11 +155,13 @@ SqlStatus buffer_cache_create_page(BufferCache *cache, const char *file_path, ui
 
     frame = find_frame(cache, file_path, page_id);
     if (frame != NULL) {
+        cache->hit_count += 1U;
         page_init(&frame->page, page_id);
         frame->dirty = true;
         *out_page = &frame->page;
         return SQL_STATUS_OK;
     }
+    cache->miss_count += 1U;
 
     frame = choose_victim(cache, &status);
     if (frame == NULL) {
@@ -189,7 +194,7 @@ SqlStatus buffer_cache_flush_file(BufferCache *cache, const char *file_path)
 
     for (index = 0U; index < BUFFER_CACHE_CAPACITY; index++) {
         if (cache->frames[index].in_use && strcmp(cache->frames[index].file_path, file_path) == 0) {
-            status = flush_frame(&cache->frames[index]);
+            status = flush_frame(cache, &cache->frames[index]);
             if (status != SQL_STATUS_OK) {
                 return status;
             }
@@ -206,11 +211,47 @@ SqlStatus buffer_cache_flush_all(BufferCache *cache)
     SqlStatus status;
 
     for (index = 0U; index < BUFFER_CACHE_CAPACITY; index++) {
-        status = flush_frame(&cache->frames[index]);
+        status = flush_frame(cache, &cache->frames[index]);
         if (status != SQL_STATUS_OK) {
             return status;
         }
     }
 
     return SQL_STATUS_OK;
+}
+
+void buffer_cache_get_stats(
+    const BufferCache *cache,
+    uint64_t *hit_count,
+    uint64_t *miss_count,
+    uint64_t *dirty_pages,
+    uint64_t *flush_count
+)
+{
+    size_t index;
+    uint64_t dirty_count;
+
+    if (cache == NULL) {
+        return;
+    }
+
+    dirty_count = 0U;
+    for (index = 0U; index < BUFFER_CACHE_CAPACITY; index++) {
+        if (cache->frames[index].in_use && cache->frames[index].dirty) {
+            dirty_count += 1U;
+        }
+    }
+
+    if (hit_count != NULL) {
+        *hit_count = cache->hit_count;
+    }
+    if (miss_count != NULL) {
+        *miss_count = cache->miss_count;
+    }
+    if (dirty_pages != NULL) {
+        *dirty_pages = dirty_count;
+    }
+    if (flush_count != NULL) {
+        *flush_count = cache->flush_count;
+    }
 }

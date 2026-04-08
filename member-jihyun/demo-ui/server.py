@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import struct
 import shutil
 import subprocess
 import tempfile
@@ -17,7 +19,9 @@ SRC_DIR = ROOT_DIR / "member-jihyun" / "src"
 SCHEMA_DIR = ROOT_DIR / "common" / "schema"
 RUNTIME_DIR = DEMO_DIR / ".runtime"
 BINARY_PATH = SRC_DIR / "sql_processor"
+CACHE_STATS_PATH = RUNTIME_DIR / "cache_stats.json"
 PAGE_SIZE = 4096
+PAGE_HEADER_SIZE = 16
 
 
 def build_binary() -> None:
@@ -42,6 +46,7 @@ def reset_runtime_data() -> None:
         data_path.unlink()
     for sql_path in RUNTIME_DIR.glob("demo_*.sql"):
         sql_path.unlink()
+    CACHE_STATS_PATH.unlink(missing_ok=True)
 
 
 def get_data_file_state(table_name: str) -> dict[str, object]:
@@ -49,26 +54,62 @@ def get_data_file_state(table_name: str) -> dict[str, object]:
     if not data_path.exists():
         return {
             "table": table_name,
-            "exists": False,
-            "sizeBytes": 0,
             "pageCount": 0,
+            "rowCount": 0,
+            "lastPageUsedBytes": 0,
         }
 
-    size_bytes = data_path.stat().st_size
+    page_count = 0
+    row_count = 0
+    last_page_used_bytes = 0
+
+    with data_path.open("rb") as file:
+        while True:
+            page = file.read(PAGE_SIZE)
+            if not page:
+                break
+            if len(page) < PAGE_HEADER_SIZE:
+                break
+
+            page_id, next_page_id, page_row_count, used_bytes = struct.unpack("<IIII", page[:PAGE_HEADER_SIZE])
+            _ = page_id, next_page_id
+
+            page_count += 1
+            row_count += int(page_row_count)
+            last_page_used_bytes = int(used_bytes)
+
     return {
         "table": table_name,
-        "exists": True,
-        "sizeBytes": size_bytes,
-        "pageCount": size_bytes // PAGE_SIZE,
+        "pageCount": page_count,
+        "rowCount": row_count,
+        "lastPageUsedBytes": last_page_used_bytes,
     }
 
 
 def build_state(last_exit_code: int | None = None) -> dict[str, object]:
     ensure_runtime_dir()
+    cache_stats = {
+        "hit": 0,
+        "miss": 0,
+        "dirtyPages": 0,
+        "flushCount": 0,
+    }
+
+    if CACHE_STATS_PATH.exists():
+        try:
+            raw = json.loads(CACHE_STATS_PATH.read_text(encoding="utf-8"))
+            cache_stats["hit"] = int(raw.get("hit", 0))
+            cache_stats["miss"] = int(raw.get("miss", 0))
+            cache_stats["dirtyPages"] = int(raw.get("dirtyPages", 0))
+            cache_stats["flushCount"] = int(raw.get("flushCount", 0))
+        except (json.JSONDecodeError, OSError, ValueError, TypeError):
+            pass
+
     return {
         "binaryReady": BINARY_PATH.exists(),
         "runtimeDir": str(RUNTIME_DIR),
         "lastExitCode": last_exit_code,
+        "cacheStats": cache_stats,
         "dataFiles": {
             "users": get_data_file_state("users"),
             "products": get_data_file_state("products"),
@@ -128,6 +169,9 @@ class DemoRequestHandler(SimpleHTTPRequestHandler):
                 temp_sql_path = Path(temp_sql.name)
 
             try:
+                CACHE_STATS_PATH.unlink(missing_ok=True)
+                env = dict(os.environ)
+                env["SQL_PROCESSOR_CACHE_STATS_PATH"] = str(CACHE_STATS_PATH)
                 result = subprocess.run(
                     [str(BINARY_PATH), temp_sql_path.name],
                     cwd=RUNTIME_DIR,
@@ -135,6 +179,7 @@ class DemoRequestHandler(SimpleHTTPRequestHandler):
                     text=True,
                     timeout=5,
                     check=False,
+                    env=env,
                 )
             finally:
                 temp_sql_path.unlink(missing_ok=True)
