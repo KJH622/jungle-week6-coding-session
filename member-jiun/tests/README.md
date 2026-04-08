@@ -4,6 +4,7 @@
 
 ## 구조
 - `cli/`: CLI/프로세스 동작 검증
+- `unit/`: 함수 단위 검증
 - `init/`: 초기화(스키마 로드/스토리지 준비) 검증
 - `input/`: SQL 입력 정리/문장 분리 검증
 - `parse/`: 문장별 파싱/에러 지속 실행 검증
@@ -20,6 +21,7 @@
 
 ## 실행
 ```bash
+./member-jiun/tests/unit/run_unit_tests.sh
 ./member-jiun/tests/cli/run_cli_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/init/run_init_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/input/run_input_tests.sh ./member-jiun/src/sql_processor
@@ -28,6 +30,12 @@
 ./member-jiun/tests/select/run_select_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/exit/run_exit_tests.sh ./member-jiun/src/sql_processor
 ```
+
+## 포함 케이스 (단위 테스트)
+- 문자열 유틸 함수 검증
+- 문장 분리 함수 검증
+- `parse_insert` 성공/실패 케이스 검증
+- `parse_select` 성공/실패 케이스 검증
 
 ## 포함 케이스 (CLI)
 - 존재하지 않는 파일 경로
