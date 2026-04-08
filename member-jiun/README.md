@@ -1,7 +1,7 @@
 # SQL 처리기
 
 파일 기반으로 동작하는 작은 SQL 처리기입니다.  
-입력 SQL 파일을 읽어서 `INSERT`, `SELECT`를 실행하고, 결과를 파일에 저장하거나 조회합니다.
+입력 SQL 파일을 읽어서 `INSERT`, `SELECT`를 실행하거나, 인터랙티브 모드에서 직접 SQL을 입력해 결과를 확인할 수 있습니다.
 
 ## 목표
 
@@ -15,6 +15,8 @@
 3. `SELECT col1, col2 FROM ...`
 4. 키워드 대소문자 비구분
 5. 에러 발생 후 다음 SQL 계속 실행
+6. 인터랙티브 모드(`./sql_processor`)
+7. 특수 명령어 `.help`, `.quit`, `.exit`, `.tables`, `.schema <table>`
 
 구현하지 않은 범위입니다.
 1. `CREATE TABLE`
@@ -28,7 +30,10 @@
 cd member-jiun/src
 make
 ./sql_processor input.sql
+./sql_processor
 ```
+
+인터랙티브 모드에서는 색상 프롬프트, ASCII 배너, 특수 명령어, 그리고 환경에 따라 readline 기반 히스토리/자동완성을 사용할 수 있습니다.
 
 ## 예시
 
@@ -130,6 +135,7 @@ flowchart LR
 ./member-jiun/tests/insert/run_insert_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/select/run_select_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/exit/run_exit_tests.sh ./member-jiun/src/sql_processor
+./member-jiun/tests/interactive/run_interactive_tests.sh ./member-jiun/src/sql_processor
 ```
 
 ### 공개 테스트
@@ -143,7 +149,7 @@ flowchart LR
 | 구분 | 내용 | 현재 상태 |
 |---|---|---|
 | 단위 테스트 | 파서 및 공통 헬퍼 함수 검증 | 완료 |
-| 기능 테스트 | CLI / 초기화 / 입력 / 파싱 / INSERT / SELECT / 종료 처리 | 완료 |
+| 기능 테스트 | CLI / 초기화 / 입력 / 파싱 / INSERT / SELECT / 종료 처리 / 인터랙티브 모드 | 완료 |
 | 공개 테스트 | `common public` 기준 검증 | 통과 |
 | 히든 테스트 | 현재 사용자 요청 기준 미실행 | 제외 |
 
@@ -156,6 +162,7 @@ flowchart LR
 3. 문자열 내부 쉼표/세미콜론 보존
 4. 에러 발생 후 다음 문장 계속 실행
 5. 종료코드 집계 정확성
+6. 파일 모드와 인터랙티브 모드의 공존
 
 ## 문서
 

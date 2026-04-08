@@ -4,7 +4,9 @@
 #include "../shared/text.h"
 
 #include <ctype.h>
+#include <dirent.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -94,6 +96,13 @@ static int load_one_schema(const char *path, TableSchema *out) {
   return (out->column_count > 0);
 }
 
+int load_named_schema(const char *table_name, TableSchema *out) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s.schema", table_name);
+  memset(out, 0, sizeof(*out));
+  return load_one_schema(path, out);
+}
+
 int load_required_schemas(SchemaRegistry *reg) {
   reg->table_count = 0;
 
@@ -108,6 +117,66 @@ int load_required_schemas(SchemaRegistry *reg) {
     reg->table_count++;
   }
   return 1;
+}
+
+int list_schema_tables(StrVec *out) {
+  DIR *dir = opendir(".");
+  struct dirent *entry;
+
+  strvec_init(out);
+  if (!dir) {
+    return 0;
+  }
+
+  while ((entry = readdir(dir)) != NULL) {
+    size_t len = strlen(entry->d_name);
+    if (len <= 7) {
+      continue;
+    }
+    if (strcmp(entry->d_name + len - 7, ".schema") != 0) {
+      continue;
+    }
+
+    char table_name[256];
+    size_t copy_len = len - 7;
+    if (copy_len >= sizeof(table_name)) {
+      copy_len = sizeof(table_name) - 1;
+    }
+    memcpy(table_name, entry->d_name, copy_len);
+    table_name[copy_len] = '\0';
+    strvec_push(out, xstrdup(table_name));
+  }
+
+  closedir(dir);
+  return 1;
+}
+
+void free_table_schema(TableSchema *schema) {
+  if (!schema) {
+    return;
+  }
+
+  free(schema->name);
+  schema->name = NULL;
+
+  for (int i = 0; i < schema->column_count; i++) {
+    free(schema->columns[i].name);
+    free(schema->columns[i].type);
+    schema->columns[i].name = NULL;
+    schema->columns[i].type = NULL;
+  }
+  schema->column_count = 0;
+}
+
+void free_schema_registry(SchemaRegistry *reg) {
+  if (!reg) {
+    return;
+  }
+
+  for (int i = 0; i < reg->table_count; i++) {
+    free_table_schema(&reg->tables[i]);
+  }
+  reg->table_count = 0;
 }
 
 const TableSchema *find_table(const SchemaRegistry *reg, const char *name) {
