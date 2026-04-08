@@ -36,12 +36,40 @@ static void print_execute_error(ExecuteResult execute_result)
     }
 }
 
+static int run_single_statement(const char *sql_text)
+{
+    SqlStatement statement;
+    ParseResult parse_result;
+    ExecuteResult execute_result;
+
+    /*
+     * 각 SQL 문장은 독립적으로 파싱/실행한다.
+     * 한 문장에서 실패하더라도 호출한 쪽이 다음 문장으로 계속 진행할 수 있게
+     * 성공이면 0, 실패면 1만 반환한다.
+     */
+    parse_result = parse_query(sql_text, &statement);
+    if (parse_result != PARSE_SUCCESS) {
+        print_parse_error(parse_result);
+        return 1;
+    }
+
+    execute_result = execute_query(&statement);
+    if (execute_result != EXECUTE_SUCCESS) {
+        print_execute_error(execute_result);
+        free_sql_statement(&statement);
+        return 1;
+    }
+
+    free_sql_statement(&statement);
+    return 0;
+}
+
 static int process_sql_file(const char *sql_path)
 {
     char *sql_text;
     SqlStatementList statements;
     size_t index;
-    int had_error;
+    int had_failure;
 
     /* 입력 SQL 파일을 통째로 읽은 뒤, 한 번만 분리해서 순서대로 처리한다. */
     sql_text = read_entire_file(sql_path);
@@ -56,36 +84,25 @@ static int process_sql_file(const char *sql_path)
         return 1;
     }
 
-    had_error = 0;
+    /*
+     * 전체 종료코드는 "하나라도 실패했는가"만 보면 되므로,
+     * 문장별 결과를 누적해서 마지막에 한 번만 반환한다.
+     */
+    had_failure = 0;
 
     for (index = 0; index < statements.count; index++) {
-        SqlStatement statement;
-        ParseResult parse_result;
-        ExecuteResult execute_result;
-
         /*
          * 빈 문장은 splitter 단계에서 제거되므로,
          * 여기서는 실제 SQL 문장만 순차적으로 parser / executor 에 넘긴다.
          */
-        parse_result = parse_query(statements.items[index], &statement);
-        if (parse_result != PARSE_SUCCESS) {
-            print_parse_error(parse_result);
-            had_error = 1;
-            continue;
+        if (run_single_statement(statements.items[index]) != 0) {
+            had_failure = 1;
         }
-
-        execute_result = execute_query(&statement);
-        if (execute_result != EXECUTE_SUCCESS) {
-            print_execute_error(execute_result);
-            had_error = 1;
-        }
-
-        free_sql_statement(&statement);
     }
 
     free_sql_statement_list(&statements);
     free(sql_text);
-    return had_error ? 1 : 0;
+    return had_failure ? 1 : 0;
 }
 
 int main(int argc, char *argv[])
