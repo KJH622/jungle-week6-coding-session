@@ -111,9 +111,63 @@ case_multiple_statements_in_one_line() {
   run_sql_and_assert "$sql" "$expected"
 }
 
+case_last_statement_without_trailing_semicolon() {
+  local sql
+  sql=$'INSERT INTO users (name, age, major) VALUES (\'김민준\', 25, \'컴퓨터공학\');\nSELECT name, age FROM users'
+  local expected
+  expected=$'name,age\n김민준,25\n'
+  run_sql_and_assert "$sql" "$expected"
+}
+
+case_empty_statements_are_ignored() {
+  local sql
+  sql=$'INSERT INTO users (name, age, major) VALUES (\'김민준\', 25, \'컴퓨터공학\');;;\nSELECT name FROM users;;\n'
+  local expected
+  expected=$'name\n김민준\n'
+  run_sql_and_assert "$sql" "$expected"
+}
+
+case_whitespace_only_file_is_noop() {
+  local sql
+  sql=$'   \n\t  \n  \n'
+  local expected
+  expected=''
+  run_sql_and_assert "$sql" "$expected"
+}
+
+case_semicolon_inside_quoted_value() {
+  local sql
+  sql=$'INSERT INTO users (name, age, major) VALUES (\'김;민준\', 25, \'컴퓨터공학\');\nSELECT name FROM users;\n'
+  local expected
+  expected=$'name\n김;민준\n'
+  run_sql_and_assert "$sql" "$expected"
+}
+
+case_windows_crlf_input() {
+  local sql
+  sql=$'INSERT INTO users (name, age, major) VALUES (\'김민준\', 25, \'컴퓨터공학\');\r\nSELECT name,major FROM users;\r\n'
+  local expected
+  expected=$'name,major\n김민준,컴퓨터공학\n'
+  run_sql_and_assert "$sql" "$expected"
+}
+
+case_multiline_statement() {
+  local sql
+  sql=$'INSERT INTO users (name, age, major)\nVALUES (\'김민준\', 25, \'컴퓨터공학\');\nSELECT name, age FROM users;\n'
+  local expected
+  expected=$'name,age\n김민준,25\n'
+  run_sql_and_assert "$sql" "$expected"
+}
+
 run_case "input_blank_lines_are_ignored" case_blank_lines_are_ignored
 run_case "input_whitespace_around_statements_is_ignored" case_whitespace_around_statements_is_ignored
 run_case "input_multiple_statements_in_one_line" case_multiple_statements_in_one_line
+run_case "input_last_statement_without_trailing_semicolon" case_last_statement_without_trailing_semicolon
+run_case "input_empty_statements_are_ignored" case_empty_statements_are_ignored
+run_case "input_whitespace_only_file_is_noop" case_whitespace_only_file_is_noop
+run_case "input_semicolon_inside_quoted_value" case_semicolon_inside_quoted_value
+run_case "input_windows_crlf_input" case_windows_crlf_input
+run_case "input_multiline_statement" case_multiline_statement
 
 echo ""
 echo "Total: $TOTAL, Pass: $PASS, Fail: $FAIL"
