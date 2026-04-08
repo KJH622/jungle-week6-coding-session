@@ -18,6 +18,7 @@
 
 ### 웹 UI
 브라우저에서 SQL을 직접 입력하고 실행 결과를 확인할 수 있습니다.
+데모 UI는 로컬 API 서버를 통해 `member-jihyun/src/sql_processor`를 실제로 실행합니다.
 
 ![데모사진](assets/demo-ui.png)
 
@@ -38,6 +39,15 @@ cd member-jihyun/src
 make
 ./sql_processor input.sql
 ```
+
+### 데모 서버 실행
+
+```bash
+python3 member-jihyun/demo-ui/server.py
+```
+
+브라우저에서 `http://127.0.0.1:8000`으로 접속하면 됩니다.
+`Run SQL`과 `Reset Data`는 모두 실제 C 실행 파일과 `.data` 파일을 기준으로 동작합니다.
 
 ---
 
