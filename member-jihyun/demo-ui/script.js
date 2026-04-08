@@ -12,6 +12,11 @@ const schemas = {
   products: ["name", "category", "price"]
 };
 
+const PAGE_SIZE_BYTES = 256;
+const PAGE_HEADER_BYTES = 24;
+const ROW_OVERHEAD_BYTES = 6;
+const textEncoder = new TextEncoder();
+
 const buttons = Array.from(document.querySelectorAll(".demo-btn"));
 const sqlInput = document.getElementById("sqlInput");
 const stdoutOutput = document.getElementById("stdoutOutput");
@@ -19,15 +24,129 @@ const stderrOutput = document.getElementById("stderrOutput");
 const runBtn = document.getElementById("runBtn");
 const clearBtn = document.getElementById("clearBtn");
 const resetBtn = document.getElementById("resetBtn");
+const clearLogBtn = document.getElementById("clearLogBtn");
 const toastContainer = document.getElementById("toastContainer");
+const eventLogList = document.getElementById("eventLogList");
+
+const cacheHitEl = document.getElementById("cacheHit");
+const cacheMissEl = document.getElementById("cacheMiss");
+const dirtyPagesEl = document.getElementById("dirtyPages");
+const flushCountEl = document.getElementById("flushCount");
+
+const usersPageCountEl = document.getElementById("usersPageCount");
+const usersRowCountEl = document.getElementById("usersRowCount");
+const usersLastUsedBytesEl = document.getElementById("usersLastUsedBytes");
+const productsPageCountEl = document.getElementById("productsPageCount");
+const productsRowCountEl = document.getElementById("productsRowCount");
+const productsLastUsedBytesEl = document.getElementById("productsLastUsedBytes");
 
 let db = createEmptyDb();
+let cacheStats = createEmptyCacheStats();
+let lastAccessTable = null;
 
 function createEmptyDb() {
   return {
     users: [],
     products: []
   };
+}
+
+function createEmptyCacheStats() {
+  return {
+    hit: 0,
+    miss: 0,
+    dirtyPages: 0,
+    flushCount: 0
+  };
+}
+
+function renderCacheStats() {
+  if (cacheHitEl) cacheHitEl.textContent = String(cacheStats.hit);
+  if (cacheMissEl) cacheMissEl.textContent = String(cacheStats.miss);
+  if (dirtyPagesEl) dirtyPagesEl.textContent = String(cacheStats.dirtyPages);
+  if (flushCountEl) flushCountEl.textContent = String(cacheStats.flushCount);
+}
+
+function byteLength(value) {
+  return textEncoder.encode(String(value)).length;
+}
+
+function estimateRowBytes(row, schema) {
+  let total = ROW_OVERHEAD_BYTES;
+
+  for (const col of schema) {
+    total += byteLength(col) + 1;
+    total += byteLength(row[col] ?? "");
+  }
+
+  return total;
+}
+
+function calculatePageStats(table) {
+  const rows = db[table] || [];
+  const schema = schemas[table] || [];
+
+  if (rows.length === 0) {
+    return {
+      pageCount: 0,
+      rowCount: 0,
+      lastUsedBytes: 0
+    };
+  }
+
+  let pageCount = 1;
+  let usedBytes = PAGE_HEADER_BYTES;
+
+  for (const row of rows) {
+    const rowBytes = estimateRowBytes(row, schema);
+
+    if (usedBytes + rowBytes > PAGE_SIZE_BYTES) {
+      pageCount += 1;
+      usedBytes = PAGE_HEADER_BYTES;
+    }
+
+    usedBytes += rowBytes;
+  }
+
+  return {
+    pageCount,
+    rowCount: rows.length,
+    lastUsedBytes: usedBytes
+  };
+}
+
+function renderPageStats() {
+  const usersStats = calculatePageStats("users");
+  const productsStats = calculatePageStats("products");
+
+  if (usersPageCountEl) usersPageCountEl.textContent = String(usersStats.pageCount);
+  if (usersRowCountEl) usersRowCountEl.textContent = String(usersStats.rowCount);
+  if (usersLastUsedBytesEl) usersLastUsedBytesEl.textContent = String(usersStats.lastUsedBytes);
+
+  if (productsPageCountEl) productsPageCountEl.textContent = String(productsStats.pageCount);
+  if (productsRowCountEl) productsRowCountEl.textContent = String(productsStats.rowCount);
+  if (productsLastUsedBytesEl) productsLastUsedBytesEl.textContent = String(productsStats.lastUsedBytes);
+}
+
+function nowTime() {
+  const d = new Date();
+  return d.toLocaleTimeString("ko-KR", { hour12: false });
+}
+
+function addEventLog(message) {
+  if (!eventLogList) {
+    return;
+  }
+
+  const item = document.createElement("li");
+  item.className = "event-log-item";
+  item.innerHTML = `<span class="log-time">[${nowTime()}]</span>${message}`;
+
+  eventLogList.prepend(item);
+
+  while (eventLogList.children.length > 20) {
+    eventLogList.removeChild(eventLogList.lastElementChild);
+  }
 }
 
 function showToast(message, type = "info") {
@@ -187,6 +306,7 @@ function executeInsert(ast) {
 
   const row = {};
   const assigned = new Set();
+  const beforePageStats = calculatePageStats(ast.table);
 
   for (let i = 0; i < ast.columns.length; i += 1) {
     const col = ast.columns[i];
@@ -200,6 +320,19 @@ function executeInsert(ast) {
   }
 
   db[ast.table].push(row);
+
+  const afterPageStats = calculatePageStats(ast.table);
+  if (afterPageStats.pageCount > beforePageStats.pageCount) {
+    addEventLog(`page full -> create page#${afterPageStats.pageCount - 1} (${ast.table})`);
+  }
+
+  cacheStats.miss += 1;
+  cacheStats.dirtyPages = Math.max(1, cacheStats.dirtyPages);
+  lastAccessTable = ast.table;
+
+  renderCacheStats();
+  renderPageStats();
+  addEventLog(`APPEND row -> ${ast.table} (used_bytes=${afterPageStats.lastUsedBytes})`);
 }
 
 function executeSelect(ast, stdoutLines) {
@@ -216,8 +349,22 @@ function executeSelect(ast, stdoutLines) {
     }
   }
 
+  if (lastAccessTable === ast.table) {
+    cacheStats.hit += 1;
+    addEventLog(`LOAD ${ast.table} -> cache hit`);
+  } else {
+    cacheStats.miss += 1;
+    addEventLog(`LOAD ${ast.table} -> cache miss`);
+  }
+  lastAccessTable = ast.table;
+
   const rows = db[ast.table];
+  const stats = calculatePageStats(ast.table);
+
   if (rows.length === 0) {
+    renderCacheStats();
+    renderPageStats();
+    addEventLog(`SCAN ${ast.table} -> 0 rows`);
     return;
   }
 
@@ -227,6 +374,19 @@ function executeSelect(ast, stdoutLines) {
     const line = columns.map((col) => row[col] ?? "").join(",");
     stdoutLines.push(line);
   }
+
+  renderCacheStats();
+  renderPageStats();
+  addEventLog(`SCAN ${ast.table} -> ${rows.length} rows, ${stats.pageCount} pages`);
+}
+
+function flushIfNeeded() {
+  if (cacheStats.dirtyPages > 0) {
+    cacheStats.flushCount += 1;
+    addEventLog(`FLUSH dirty pages -> ${cacheStats.dirtyPages}`);
+    cacheStats.dirtyPages = 0;
+    renderCacheStats();
+  }
 }
 
 function runSql() {
@@ -234,8 +394,11 @@ function runSql() {
   const stdoutLines = [];
   const stderrLines = [];
 
+  addEventLog("RUN SQL requested");
+
   try {
     const statements = splitStatements(sql);
+    addEventLog(`PARSE statements -> ${statements.length}`);
 
     for (const statement of statements) {
       try {
@@ -250,19 +413,26 @@ function runSql() {
         }
       } catch (err) {
         stderrLines.push(`ERROR: ${err.message || "invalid query"}`);
+        addEventLog(`ERROR -> ${err.message || "invalid query"}`);
       }
     }
   } catch (err) {
     stderrLines.push(`ERROR: ${err.message || "invalid query"}`);
+    addEventLog(`ERROR -> ${err.message || "invalid query"}`);
   }
+
+  flushIfNeeded();
+  renderPageStats();
 
   stdoutOutput.textContent = stdoutLines.join("\n");
   stderrOutput.textContent = stderrLines.join("\n");
 
   if (stderrLines.length > 0) {
     showToast("SQL 실행 완료: 에러가 포함되어 있습니다.", "warn");
+    addEventLog("RUN complete (with error)");
   } else {
     showToast("SQL 실행 완료", "success");
+    addEventLog("RUN complete (success)");
   }
 }
 
@@ -276,6 +446,7 @@ buttons.forEach((button) => {
     button.classList.add("is-active");
     setTemplate(button.dataset.scenario);
     showToast("템플릿을 불러왔습니다.", "info");
+    addEventLog(`TEMPLATE -> ${button.dataset.scenario}`);
   });
 });
 
@@ -292,14 +463,33 @@ clearBtn.addEventListener("click", () => {
   stdoutOutput.textContent = "";
   stderrOutput.textContent = "";
   showToast("출력을 비웠습니다.", "info");
+  addEventLog("OUTPUT cleared");
 });
 
 resetBtn.addEventListener("click", () => {
   db = createEmptyDb();
+  cacheStats = createEmptyCacheStats();
+  lastAccessTable = null;
+  renderCacheStats();
+  renderPageStats();
   stdoutOutput.textContent = "";
   stderrOutput.textContent = "";
   showToast("데이터를 초기화했습니다.", "warn");
+  addEventLog("DATA reset");
 });
 
+if (clearLogBtn) {
+  clearLogBtn.addEventListener("click", () => {
+    if (eventLogList) {
+      eventLogList.innerHTML = "";
+    }
+    addEventLog("EVENT LOG cleared");
+    showToast("이벤트 로그를 비웠습니다.", "info");
+  });
+}
+
 setTemplate("insert");
+renderCacheStats();
+renderPageStats();
+addEventLog("UI ready");
 showToast("SQL을 입력하고 Run SQL을 눌러 실행하세요.", "info");
