@@ -1,552 +1,180 @@
-# Mini SQL Parser — Codex Implementation Plan
+# Mini SQL Parser - Phase 2 계획 및 보정 기록
 
-## Objective
+## 목표
 
-Build a C-based SQL processor in `member-dragon/src/`. It reads a `.sql` file, parses and executes `INSERT` and `SELECT` statements against file-backed tables whose schemas are loaded from `.schema` JSON files in the current working directory.
+기존 파일 기반 SQL 처리기에 아래 기능을 추가한다.
 
-**IMPORTANT CONSTRAINTS:**
-- Only create/modify files inside `member-dragon/`
-- Do NOT implement networking or sockets — use a lightweight file-backed table store only
-- Do NOT modify anything in `common/`
-- All error messages must be **exact strings** (case-sensitive, no extra text)
-- Design with a vtable (function pointer table) pattern for the storage layer so it can be swapped later
+- `DELETE`
+- `UPDATE`
+- `WHERE`
+- 비교 연산자 `=`, `!=`, `>`, `<`, `>=`, `<=`
+- `ORDER BY`
+- `LIMIT`
+- `INSERT` 컬럼 순서 재정렬
 
-## Review-Driven Corrections
+대상 구현 위치는 `member-dragon/src/`이며, `common/`은 수정하지 않는다.
 
-The initial plan had a few gaps that would make the implementation brittle. These are corrected here and recorded so the reason stays visible during implementation.
+## 원래 계획에서 문제였던 점과 수정 이유
 
-| Issue found in review | What was wrong | Plan correction |
+| 문제 | 왜 위험했는가 | 실제 수정 |
 |---|---|---|
-| `ResultSet` ownership was unclear | The original `char **headers` / `char ***rows` design did not define who allocates or frees per-SELECT buffers, which would likely leak memory or create invalid frees | Switch `ResultSet` to fixed-capacity buffers owned by the caller struct itself so one `SELECT` does not create extra ownership rules |
-| Schema loading failure path was unchecked | `load_schemas()` could return `-1`, but `main()` still tried to initialize storage, making startup failure undefined | `main()` must check schema load result before storage init and fail fast with the standard file-open error path |
-| Plan said “split statements” but sample loop read one line at a time | A line-oriented loop would only work because current tests put one SQL statement per line; it would not match the stated design goal | `main()` will accumulate file contents and split statements on semicolons that are outside quotes |
-| INSERT column list was treated as informational only | Ignoring the column list could silently write data into the wrong schema positions when names or order differ | Parser will keep the INSERT column list, and executor will validate it before storage insert. Count mismatches follow the project’s `column count does not match value count` error path; same-count name/order mismatches are treated as invalid queries |
-| Original storage direction violated the assignment brief | The first draft focused on shared tests and chose in-memory rows, but the assignment explicitly says INSERT writes files and SELECT reads files | Replace the backend with a file-backed `StorageOps` implementation that writes `<table>.data` files in the current working directory |
-
----
-
-## File Structure to Create
-
-```
-member-dragon/src/
-├── Makefile
-├── types.h             # Shared types: Command, TableDef, ResultSet, StorageOps vtable
-├── main.c              # Entry point: read .sql file, split statements, run loop
-├── schema.h / schema.c # Load *.schema JSON files from cwd into TableDef[]
-├── parser.h / parser.c # Parse SQL string → Command struct
-├── storage.h           # StorageOps vtable interface (no implementation)
-├── file_storage.h / file_storage.c      # File-backed StorageOps implementation
-├── executor.h / executor.c              # Execute Command via StorageOps
-```
-
----
-
-## 1. Types (`types.h`)
-
-```c
-#ifndef TYPES_H
-#define TYPES_H
-
-#define MAX_NAME_LEN 256
-#define MAX_COLUMNS 32
-#define MAX_VALUES 32
-#define MAX_ROWS 1024
-#define MAX_TABLES 16
-
-typedef enum { CMD_NONE, CMD_INSERT, CMD_SELECT } CommandType;
-
-typedef struct {
-    char name[MAX_NAME_LEN];
-    char type[MAX_NAME_LEN]; // "string" or "int"
-} ColumnDef;
-
-typedef struct {
-    char name[MAX_NAME_LEN];
-    ColumnDef columns[MAX_COLUMNS];
-    int column_count;
-} TableDef;
-
-typedef struct {
-    CommandType type;
-    char table_name[MAX_NAME_LEN];
-    // For INSERT:
-    char insert_columns[MAX_COLUMNS][MAX_NAME_LEN];
-    int insert_column_count;
-    char values[MAX_VALUES][MAX_NAME_LEN];
-    int value_count;
-    // For SELECT:
-    char columns[MAX_COLUMNS][MAX_NAME_LEN];
-    int column_count;
-    int is_select_all; // 1 if SELECT *
-} Command;
-
-typedef struct {
-    char headers[MAX_COLUMNS][MAX_NAME_LEN];
-    int header_count;
-    char rows[MAX_ROWS][MAX_COLUMNS][MAX_NAME_LEN];
-    int row_count;
-} ResultSet;
-
-// Storage vtable — abstract interface for data backends
-typedef struct StorageOps {
-    void *ctx; // opaque context pointer
-    int  (*init)(void *ctx, TableDef *tables, int table_count);
-    int  (*insert)(void *ctx, const char *table, const char values[][MAX_NAME_LEN], int value_count);
-    int  (*select_rows)(void *ctx, const char *table, const char columns[][MAX_NAME_LEN], int col_count,
-                        int select_all, ResultSet *out);
-    void (*destroy)(void *ctx);
-} StorageOps;
-
-typedef enum {
-    ERR_NONE = 0,
-    ERR_INVALID_QUERY,
-    ERR_TABLE_NOT_FOUND,
-    ERR_COLUMN_MISMATCH,
-    ERR_FILE_OPEN
-} ErrorCode;
-
-#endif
-```
-
----
-
-## 2. Schema Loader (`schema.c`)
-
-**Behavior:**
-- Scan current working directory for files matching `*.schema`
-- Parse each file as JSON with this structure:
-```json
-{
-  "table": "users",
-  "columns": [
-    { "name": "name", "type": "string" },
-    { "name": "age", "type": "int" },
-    { "name": "major", "type": "string" }
-  ]
-}
-```
-- Return an array of `TableDef` and the count
-- **No external JSON library** — hand-parse with string functions (strstr, sscanf, etc.)
-
-**Known schemas (for reference, but code must parse dynamically):**
-
-Table `users`: columns = `[name:string, age:int, major:string]`
-Table `products`: columns = `[name:string, price:int, category:string]`
-
-**Interface:**
-```c
-int load_schemas(const char *dir, TableDef *tables, int max_tables);
-// Returns number of tables loaded, or -1 on error
-```
-
----
-
-## 3. Parser (`parser.c`)
-
-**Interface:**
-```c
-int parse_sql(const char *sql_line, Command *cmd);
-// Returns 0 on success, -1 on parse error
-// Sets cmd->type = CMD_NONE for blank lines
-```
-
-**Supported SQL syntax:**
-```
-INSERT INTO <table> (<col1>, <col2>, ...) VALUES (<val1>, <val2>, ...);
-SELECT <col1>, <col2>, ... FROM <table>;
-SELECT * FROM <table>;
-```
-
-**Critical parsing rules:**
-1. **Keywords are case-insensitive**: `INSERT`, `insert`, `Insert` all valid. Use `strcasecmp`.
-2. **Values are in single quotes or unquoted integers**: `'김민준'`, `25`, `'컴퓨터공학'`
-3. **Single-quoted values may contain spaces**: `'김 민준'` → `김 민준`
-4. **Single-quoted values may contain commas**: `'키보드, 마우스 세트'` → `키보드, 마우스 세트`
-5. **Blank lines (whitespace only) must be skipped** — set `cmd->type = CMD_NONE`
-6. **Trailing semicolons** should be handled (may or may not be present)
-7. **INSERT includes a full column list** in parentheses — the implementation will parse and validate it against the schema to avoid silent positional mistakes
-   - If the column count does not match the schema’s full-row INSERT shape, report `ERROR: column count does not match value count`
-   - If the count matches but names/order do not, report `ERROR: invalid query`
-
-**Value extraction algorithm:**
-When parsing the VALUES clause `(val1, val2, ...)`:
-- Iterate character by character
-- If `'` is found, read until the next `'` — everything between is one value (including commas and spaces)
-- If not in quotes, split on `,` and trim whitespace
-- Strip surrounding quotes from string values before storing
-
-The parser still works on **one SQL statement at a time**. Multi-line files or multiple statements per line are handled by `main()` before `parse_sql()` is called.
-
----
-
-## 4. File Storage (`file_storage.c`)
-
-Implements `StorageOps` vtable using per-table data files in the current working directory.
-
-**Interface:**
-```c
-StorageOps *file_storage_create(void);
-// Returns a new StorageOps with ctx allocated, function pointers set
-```
-
-**Internal data structure:**
-```c
-typedef struct {
-    TableDef tables[MAX_TABLES];
-    int table_count;
-    char data_dir[MAX_PATH_LEN];
-} FileStore;
-```
-
-**Behavior:**
-- `init`: Copy TableDef array into `FileStore` and capture the current working directory as the data directory
-- `insert`: Find table by name → if not found return ERR_TABLE_NOT_FOUND. Check value_count == column_count → if mismatch return ERR_COLUMN_MISMATCH. Append one encoded row to `<table>.data`
-- `select_rows`: Find table by name → if not found return ERR_TABLE_NOT_FOUND. If the data file does not exist yet, treat it as an empty table. Otherwise read `<table>.data`, decode rows, validate requested columns, and fill the caller-owned `ResultSet`
-- `destroy`: Free the allocated store context
-
----
-
-## 5. Executor (`executor.c`)
-
-**Interface:**
-```c
-int execute_command(Command *cmd, StorageOps *ops, TableDef *tables, int table_count);
-// Returns 0 on success, -1 on error (error already printed to stderr)
-```
-
-**Behavior for INSERT:**
-1. Validate that the parsed INSERT column list matches the project’s full-row schema shape
-   - count mismatch → `ERROR: column count does not match value count`
-   - same-count name/order mismatch → `ERROR: invalid query`
-2. Call `ops->insert(ops->ctx, cmd->table_name, cmd->values, cmd->value_count)`
-3. If returns ERR_TABLE_NOT_FOUND → `fprintf(stderr, "ERROR: table not found\n")`
-4. If returns ERR_COLUMN_MISMATCH → `fprintf(stderr, "ERROR: column count does not match value count\n")`
-5. Success → no output (silent)
-
-**Behavior for SELECT:**
-1. Call `ops->select_rows(ops->ctx, cmd->table_name, columns, count, is_select_all, &result)`
-2. If returns ERR_TABLE_NOT_FOUND → `fprintf(stderr, "ERROR: table not found\n")`
-3. If returns ERR_INVALID_QUERY → `fprintf(stderr, "ERROR: invalid query\n")`
-4. If result has 0 rows → **no output at all** (no headers either)
-5. If result has rows:
-   - Print header line: column names joined by `,` followed by `\n`
-   - Print each row: values joined by `,` followed by `\n`
-   - Output goes to **stdout**
-
----
-
-## 6. Main (`main.c`)
-
-```c
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "ERROR: file open failed\n");
-        return 1;
-    }
-
-    FILE *fp = fopen(argv[1], "r");
-    if (!fp) {
-        fprintf(stderr, "ERROR: file open failed\n");
-        return 1;
-    }
-
-    // 1. Load schemas from current directory
-    TableDef tables[MAX_TABLES];
-    int table_count = load_schemas(".", tables, MAX_TABLES);
-
-    // 2. Initialize storage (file backend)
-    StorageOps *ops = file_storage_create();
-    ops->init(ops->ctx, tables, table_count);
-
-    if (table_count < 0) {
-        fprintf(stderr, "ERROR: file open failed\n");
-        fclose(fp);
-        return 1;
-    }
-
-    // 3. Read and execute each statement
-    int has_error = 0;
-    char statement[8192];
-    // Accumulate chars and split on semicolons that are outside quotes.
-    while (read_next_statement(fp, statement, sizeof(statement))) {
-        Command cmd;
-        if (parse_sql(statement, &cmd) != 0) {
-            fprintf(stderr, "ERROR: invalid query\n");
-            has_error = 1;
-            continue;
-        }
-        if (cmd.type == CMD_NONE) continue; // blank line
-
-        if (execute_command(&cmd, ops, tables, table_count) != 0) {
-            has_error = 1;
-        }
-    }
-
-    // 4. Cleanup
-    fclose(fp);
-    ops->destroy(ops->ctx);
-    free(ops);
-
-    return has_error ? 1 : 0;
-}
-```
-
----
-
-## 7. Makefile
-
-```makefile
-CC = gcc
-CFLAGS = -Wall -Wextra -g
-TARGET = sql_processor
-SRCS = main.c schema.c parser.c file_storage.c executor.c
-OBJS = $(SRCS:.c=.o)
-
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
-
-%.o: %.c
-	$(CC) $(CFLAGS) -c $<
-
-clean:
-	rm -f $(OBJS) $(TARGET)
-
-.PHONY: clean
-```
-
----
-
-## 8. Exact Error Messages (MUST match exactly)
-
-These are the **only** error strings the program may produce. They go to **stderr**.
-
-| Condition | Exact stderr output |
-|---|---|
-| SQL file cannot be opened | `ERROR: file open failed\n` |
-| SQL cannot be parsed | `ERROR: invalid query\n` |
-| Table name not in schemas | `ERROR: table not found\n` |
-| INSERT value count != schema column count | `ERROR: column count does not match value count\n` |
-| SELECT references non-existent column | `ERROR: invalid query\n` |
-
-Rules:
-- One error per SQL statement max
-- After an error, continue to the next statement
-- Exit code 0 if all succeeded, 1 if any error occurred
-
----
-
-## 9. Test Cases (All Must Pass)
-
-### Public Tests (6)
-
-**01_basic** — 2 INSERTs + SELECT *
-```
-Input:  INSERT INTO users (name, age, major) VALUES ('김민준', 25, '컴퓨터공학');
-        INSERT INTO users (name, age, major) VALUES ('이서연', 22, '경영학');
-        SELECT * FROM users;
-stdout: name,age,major
-        김민준,25,컴퓨터공학
-        이서연,22,경영학
-stderr: (empty)
-```
-
-**02_select_columns** — SELECT specific columns
-```
-Input:  INSERT INTO users ... VALUES ('김민준', 25, '컴퓨터공학');
-        INSERT INTO users ... VALUES ('이서연', 22, '경영학');
-        INSERT INTO users ... VALUES ('박지호', 23, '물리학');
-        SELECT name, major FROM users;
-stdout: name,major
-        김민준,컴퓨터공학
-        이서연,경영학
-        박지호,물리학
-```
-
-**03_multi_table** — Cross-table operations
-```
-Input:  INSERT INTO users ... VALUES ('김민준', 25, '컴퓨터공학');
-        INSERT INTO products ... VALUES ('노트북', 1500000, '전자기기');
-        INSERT INTO products ... VALUES ('키보드', 89000, '주변기기');
-        SELECT * FROM products;
-        SELECT name FROM users;
-stdout: name,price,category
-        노트북,1500000,전자기기
-        키보드,89000,주변기기
-        name
-        김민준
-```
-
-**04_incremental** — INSERT-SELECT-INSERT-SELECT (data accumulates)
-```
-Input:  INSERT INTO users ... VALUES ('김민준', 25, '컴퓨터공학');
-        SELECT * FROM users;
-        INSERT INTO users ... VALUES ('이서연', 22, '경영학');
-        SELECT * FROM users;
-stdout: name,age,major
-        김민준,25,컴퓨터공학
-        name,age,major
-        김민준,25,컴퓨터공학
-        이서연,22,경영학
-```
-
-**05_case_insensitive** — Lowercase keywords
-```
-Input:  insert into users (name, age, major) values ('김민준', 25, '컴퓨터공학');
-        Select * from users;
-stdout: name,age,major
-        김민준,25,컴퓨터공학
-```
-
-**06_many_rows** — 5 INSERTs + SELECT two columns
-```
-Input:  5x INSERT INTO users ...
-        SELECT name, age FROM users;
-stdout: name,age
-        김민준,25
-        이서연,22
-        박지호,23
-        최유나,21
-        정현우,24
-```
-
-### Hidden Tests (8)
-
-**hidden/01_empty_table** — SELECT from empty table → no output at all
-```
-Input:  SELECT * FROM users;
-stdout: (empty)
-stderr: (empty)
-```
-
-**hidden/02_blank_lines** — SQL file has blank lines between statements
-```
-Input:  INSERT INTO users ... VALUES ('김민준', 25, '컴퓨터공학');
-        (blank line)
-        INSERT INTO users ... VALUES ('이서연', 22, '경영학');
-        (blank line)
-        (blank line)
-        SELECT * FROM users;
-stdout: name,age,major
-        김민준,25,컴퓨터공학
-        이서연,22,경영학
-```
-
-**hidden/03_column_mismatch** — INSERT with wrong number of values
-```
-Input:  INSERT INTO users (name, age, major) VALUES ('김민준', 25);
-        SELECT * FROM users;
-stdout: (empty)
-stderr: ERROR: column count does not match value count
-```
-
-**hidden/04_no_table** — Non-existent table (both INSERT and SELECT fail)
-```
-Input:  INSERT INTO orders (item, qty) VALUES ('notebook', 3);
-        SELECT * FROM orders;
-stdout: (empty)
-stderr: ERROR: table not found
-        ERROR: table not found
-```
-
-**hidden/05_spaces_in_value** — Values with spaces inside quotes
-```
-Input:  INSERT INTO users ... VALUES ('김 민준', 25, '컴퓨터 공학과');
-        INSERT INTO users ... VALUES ('이서연', 22, '경영학');
-        SELECT * FROM users;
-stdout: name,age,major
-        김 민준,25,컴퓨터 공학과
-        이서연,22,경영학
-```
-
-**hidden/06_comma_in_value** — Value with comma inside quotes
-```
-Input:  INSERT INTO products ... VALUES ('키보드, 마우스 세트', 45000, '주변기기');
-        SELECT * FROM products;
-stdout: name,price,category
-        키보드, 마우스 세트,45000,주변기기
-```
-
-**hidden/07_invalid_column** — SELECT non-existent column
-```
-Input:  INSERT INTO users ... VALUES ('김민준', 25, '컴퓨터공학');
-        SELECT name, email FROM users;
-stdout: (empty)
-stderr: ERROR: invalid query
-```
-
-**hidden/08_mixed_errors** — Multiple errors + recovery
-```
-Input:  INSERT INTO users ... VALUES ('김민준', 25, '컴퓨터공학');    ← OK
-        INSERT INTO users (name, age) VALUES ('이서연', 22);          ← column mismatch
-        INSERT INTO orders (item, qty) VALUES ('notebook', 3);         ← table not found
-        INSERT INTO users ... VALUES ('박지호', 23, '물리학');          ← OK
-        SELECT * FROM users;                                           ← OK (2 rows)
-stdout: name,age,major
-        김민준,25,컴퓨터공학
-        박지호,23,물리학
-stderr: ERROR: column count does not match value count
-        ERROR: table not found
-exit:   1
-```
-
----
-
-## 10. Build & Test Commands
+| `SELECT`의 `WHERE`/`ORDER BY`를 projection 이후 `ResultSet`에서 처리하려고 했음 | `SELECT name FROM users WHERE age > 22`처럼 조건 컬럼이 출력 컬럼에 없으면 필터나 정렬이 깨진다 | `StorageOps`에 `read_all_rows`, `replace_rows`를 추가하고, executor가 전체 row를 먼저 읽어 처리한 뒤 마지막에 projection 하도록 바꿨다 |
+| `DELETE`/`UPDATE`를 전용 vtable 함수로 바로 넣으려 했음 | 저장소가 조건 해석까지 떠안게 되고, `WHERE`/`ORDER BY`와 실행 규칙이 여러 곳으로 흩어진다 | 저장소는 "전체 row 읽기/전체 row 교체"만 책임지고, 조건 해석은 executor 한 곳에서 처리하도록 정리했다 |
+| `INSERT` 컬럼 재정렬 계획에 중복 컬럼 검사 내용이 없었음 | `INSERT INTO users (name, name, major) ...` 같은 입력이 조용히 잘못 저장될 수 있다 | executor에서 schema 인덱스 기준 `seen[]` 검사를 넣어 중복/누락을 `invalid query`로 막는다 |
+| 수동 검증을 `src/` 기준으로 적어 둠 | 이 프로그램은 현재 디렉토리의 `.schema`를 읽기 때문에 `src/`에서 바로 실행하면 실패하기 쉽다 | `playground` 또는 임시 디렉토리에 `.schema`를 둔 상태로 검증하도록 절차를 바꿨다 |
+
+## 구현 전략
+
+### 1. 타입 확장
+
+`types.h`에 아래 구조를 추가한다.
+
+- `CMD_DELETE`, `CMD_UPDATE`
+- `WhereCondition`
+- `OrderByClause`
+- `SetClause`
+- `StorageOps.read_all_rows`
+- `StorageOps.replace_rows`
+
+핵심 포인트는 기존 `select_rows`를 깨지 않고, 고급 기능에 필요한 "전체 row 기준 작업"만 추가하는 것이다.
+
+### 2. 파서 확장
+
+`parser.c`에서 아래를 지원한다.
+
+- `SELECT ... [WHERE ...] [ORDER BY ...] [LIMIT ...]`
+- `DELETE FROM ... [WHERE ...]`
+- `UPDATE ... SET ... [WHERE ...]`
+
+이번 범위의 문법 제한:
+
+- `WHERE`는 조건 1개만 지원
+- `AND`, `OR`, 괄호는 지원하지 않음
+- `ORDER BY`는 컬럼 1개만 지원
+- `LIMIT`은 정수 1개만 지원
+
+### 3. 저장소 확장
+
+`file_storage.c`는 두 단계로 동작한다.
+
+1. `<table>.data` 전체를 읽어서 schema 순서의 `ResultSet`으로 만든다
+2. 바뀐 `ResultSet`을 다시 `<table>.data` 파일 전체로 덮어쓴다
+
+이 구조 덕분에 `DELETE`, `UPDATE`, `WHERE`, `ORDER BY`가 모두 같은 row 표현을 공유한다.
+
+### 4. 실행기 확장
+
+`executor.c`에서 기능별로 아래 순서로 처리한다.
+
+#### INSERT
+
+1. 테이블 존재 확인
+2. 컬럼 수 / 값 수 / schema 컬럼 수 확인
+3. 입력 컬럼을 schema 순서로 재배열
+4. 중복 컬럼 / 없는 컬럼 검사
+5. `ops->insert()` 호출
+
+#### SELECT
+
+1. `ops->read_all_rows()`로 전체 row 읽기
+2. `WHERE` 컬럼 유효성 검사
+3. `ORDER BY` 컬럼 유효성 검사
+4. `WHERE` 필터 적용
+5. `ORDER BY` 정렬 적용
+6. `LIMIT` 적용
+7. 마지막에 요청 컬럼만 projection
+8. stdout 출력
+
+#### DELETE
+
+1. `ops->read_all_rows()`로 전체 row 읽기
+2. `WHERE`가 있으면 matching row 제거
+3. `WHERE`가 없으면 전체 삭제
+4. `ops->replace_rows()`로 파일 다시 쓰기
+
+#### UPDATE
+
+1. `ops->read_all_rows()`로 전체 row 읽기
+2. `SET` 대상 컬럼 검사
+3. `WHERE`가 맞는 row만 값 수정
+4. `ops->replace_rows()`로 파일 다시 쓰기
+
+## 비교 규칙
+
+- 두 값이 모두 정수처럼 해석되면 숫자 비교
+- 아니면 문자열 비교
+
+이 규칙은 `WHERE`와 `ORDER BY`에 공통으로 사용한다.
+
+## 에러 규칙
+
+기존 exact string 4개만 계속 사용한다.
+
+- `ERROR: invalid query`
+- `ERROR: table not found`
+- `ERROR: column count does not match value count`
+- `ERROR: file open failed`
+
+새 기능에서의 매핑:
+
+- 없는 테이블에 `DELETE`/`UPDATE`/`SELECT` -> `table not found`
+- 없는 컬럼을 `WHERE`/`ORDER BY`/`SET`에서 사용 -> `invalid query`
+- `INSERT`에서 컬럼 수/값 수/schema 수가 다름 -> `column count does not match value count`
+- `INSERT`에서 컬럼 중복/없는 컬럼/누락 컬럼 -> `invalid query`
+
+## 구현 순서
+
+1. `types.h`에 새 타입과 vtable 추가
+2. `parser.c`에 새 문법 추가
+3. `file_storage.c`에 전체 row 읽기/교체 추가
+4. `executor.c`에 full-row 기준 실행 파이프라인 추가
+5. `main.c`에서 새 vtable 포인터 null 체크
+6. 기존 public/hidden 테스트 재검증
+7. 새 기능 수동 검증
+8. `usage.md`, `decisions.md`, `trouble.md`, 하네스 문서 동기화
+
+## 검증 절차
+
+### 기존 테스트
 
 ```bash
-# Build
 cd member-dragon/src
-make
+make clean && make
 
-# Run public tests (from project root)
+cd /Users/kimyong/WorkSpace/mini-sql-parser/jungle-week6-coding-session
 ./common/scripts/run_tests.sh ./member-dragon/src/sql_processor public
-
-# Run hidden tests (from project root)
 ./common/scripts/run_tests.sh ./member-dragon/src/sql_processor hidden
 ```
 
-The test runner:
-1. Creates a temp directory per test
-2. Copies `*.schema` files from `common/schema/` into it
-3. Copies the `.sql` file into it
-4. `cd`s into the temp dir and runs `./sql_processor <file>.sql`
-5. Compares stdout and stderr against `.expected` and `.expected_err` files
-6. Reports PASS/FAIL
+### 새 기능 수동 검증
 
----
+`playground` 또는 임시 디렉토리에서 `.schema`를 둔 상태로 실행한다.
 
-## 11. Harness Starter Pack Documentation Updates
+예시:
 
-After implementation, update these files inside `member-dragon/harness-starter-pack/`:
+```bash
+cd member-dragon/playground
+./reset.sh
+../src/sql_processor extended.sql
+```
 
-| File | Change |
-|---|---|
-| `AGENTS.md` | Add mini-sql-parser project context, 3-session roadmap |
-| `ARCHITECTURE.md` | Document vtable architecture, module boundaries |
-| `docs/design-docs/golden-principles.md` | C-specific: memory safety, interface stability, error recovery |
-| `docs/design-docs/index.md` | Update document list for SQL parser |
-| `docs/product-specs/index.md` | Session 1 feature spec (INSERT, SELECT, errors) |
-| `docs/product-specs/feature-template.md` | Concrete SQL parser feature spec |
-| `docs/exec-plans/active/current-plan.md` | Current implementation status |
-| `docs/design-docs/domain-rules.md` | **NEW** — SQL dialect rules, value parsing, error priority |
+## 구현 완료 후 확인 결과
 
-Also update `member-dragon/` root docs:
-| File | Change |
-|---|---|
-| `decisions.md` | vtable pattern rationale, module separation, memory management |
-| `prompts.md` | AI usage log |
-| `trouble.md` | Issues encountered and solutions |
+- `make clean && make` 성공
+- public 6/6 PASS
+- hidden 8/8 PASS
+- 수동 검증으로 아래 시나리오 확인
+  - `SELECT name FROM users WHERE age > 22 ORDER BY age DESC LIMIT 2`
+  - `UPDATE users SET major = '전자공학' WHERE name = '김민준'`
+  - `DELETE FROM users WHERE age < 22`
+  - `INSERT INTO users (major, name, age) VALUES ('수학', '정현우', 24)`
 
----
+## 이번 범위에서 제외한 것
 
-## 12. Key Edge Cases to Handle
-
-1. **Empty table SELECT** → zero output (no headers, no rows, no newline)
-2. **Blank lines in SQL file** → skip silently, do not error
-3. **Commas inside single-quoted values** → must not split on them
-4. **Spaces inside single-quoted values** → preserve exactly
-5. **Integer values** → no quotes, store as string internally, output as-is
-6. **Multiple SELECTs** → each prints its own header line
-7. **Error recovery** → after error on one statement, continue processing next
-8. **Exit code** → 1 if ANY error occurred across all statements, 0 otherwise
-9. **INSERT column list** → present in SQL but values are positional (match schema order)
+- `JOIN`
+- `GROUP BY`
+- 집계 함수
+- `AND` / `OR`
+- 다중 `ORDER BY`
+- 서브쿼리
+- escaped quote 같은 확장 SQL 문법

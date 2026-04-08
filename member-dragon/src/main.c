@@ -97,8 +97,11 @@ int main(int argc, char *argv[]) {
     /* 저장소 백엔드를 만들고 스키마 정보를 넘깁니다.
        이번 프로젝트에서는 <table>.data 파일을 읽고 쓰는 저장소를 사용합니다. */
     ops = file_storage_create();
+    /* Phase 2부터는 read_all_rows / replace_rows도 꼭 있어야
+       WHERE, ORDER BY, DELETE, UPDATE가 정상 동작할 수 있습니다. */
     if (ops == NULL || ops->init == NULL || ops->insert == NULL ||
-        ops->select_rows == NULL || ops->destroy == NULL ||
+        ops->select_rows == NULL || ops->read_all_rows == NULL ||
+        ops->replace_rows == NULL || ops->destroy == NULL ||
         ops->init(ops->ctx, tables, table_count) != ERR_NONE) {
         if (ops != NULL) {
             if (ops->destroy != NULL && ops->ctx != NULL) {

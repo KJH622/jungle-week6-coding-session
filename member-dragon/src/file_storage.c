@@ -53,6 +53,20 @@ static int build_table_path(const FileStore *store, const char *table_name,
     return written > 0 && (size_t)written < path_size ? 0 : -1;
 }
 
+/* ResultSet 헤더를 스키마 순서대로 채웁니다.
+   파일에서 읽은 row도 이 순서를 기준으로 저장합니다.
+   즉 row[0]은 항상 첫 번째 컬럼, row[1]은 두 번째 컬럼이라는 약속을 만드는 함수입니다. */
+static void set_full_headers(const TableDef *table, ResultSet *out) {
+    int col;
+
+    result_set_reset(out);
+    out->header_count = table->column_count;
+
+    for (col = 0; col < table->column_count; col++) {
+        strcpy(out->headers[col], table->columns[col].name);
+    }
+}
+
 /* 행 1개를 길이+값 형식으로 저장합니다.
    예:
    9:김민준2:2515:컴퓨터공학
@@ -126,6 +140,107 @@ static int parse_encoded_row(const char *line, int expected_columns,
     return *cursor == '\0' ? 0 : -1;
 }
 
+/* <table>.data 파일 전체를 읽어서 스키마 순서의 ResultSet으로 만듭니다. */
+static int load_full_table(FileStore *store, const TableDef *table, ResultSet *out) {
+    char path[MAX_PATH_LEN];
+    FILE *fp;
+    char line[MAX_ROW_LINE_LEN];
+
+    /* ResultSet을 먼저 비우고,
+       헤더를 스키마 순서대로 채워서 "전체 테이블 모습"을 담을 준비를 합니다. */
+    set_full_headers(table, out);
+
+    if (build_table_path(store, table->name, path, sizeof(path)) != 0) {
+        return ERR_FILE_OPEN;
+    }
+
+    /* 데이터 파일이 아직 없다면 "빈 테이블"로 보면 되므로 에러가 아닙니다. */
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        if (errno == ENOENT) {
+            return ERR_NONE;
+        }
+        return ERR_FILE_OPEN;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char row_values[MAX_COLUMNS][MAX_VALUE_LEN];
+        int col;
+
+        /* ResultSet은 고정 크기이므로 너무 많은 row는 더 담을 수 없습니다. */
+        if (out->row_count >= MAX_ROWS) {
+            fclose(fp);
+            return ERR_INVALID_QUERY;
+        }
+
+        /* 파일에 저장된 길이:값 포맷을 다시 컬럼 배열로 복원합니다. */
+        if (parse_encoded_row(line, table->column_count, row_values) != 0) {
+            fclose(fp);
+            return ERR_FILE_OPEN;
+        }
+
+        /* 복원한 row를 현재 row_count 위치에 옮긴 뒤,
+           다음 줄은 그 다음 칸에 쌓이도록 row_count를 늘립니다. */
+        for (col = 0; col < table->column_count; col++) {
+            strcpy(out->rows[out->row_count][col], row_values[col]);
+        }
+        out->row_count++;
+    }
+
+    if (ferror(fp)) {
+        fclose(fp);
+        return ERR_FILE_OPEN;
+    }
+
+    fclose(fp);
+    return ERR_NONE;
+}
+
+/* 전체 row를 다 읽은 뒤, SELECT가 요청한 컬럼만 남기도록 ResultSet을 줄입니다. */
+static int project_result_in_place(ResultSet *result, const TableDef *table,
+                                   const char columns[][MAX_NAME_LEN], int col_count,
+                                   int select_all) {
+    int selected_indices[MAX_COLUMNS];
+    char projected_headers[MAX_COLUMNS][MAX_NAME_LEN];
+    int row;
+    int col;
+
+    /* SELECT * 는 이미 전체 컬럼 상태이므로 손댈 필요가 없습니다. */
+    if (select_all) {
+        return ERR_NONE;
+    }
+
+    /* 요청한 컬럼 이름이 스키마에서 몇 번째인지 먼저 찾아 둡니다.
+       이 인덱스를 써서 각 row에서 필요한 값만 골라낼 수 있습니다. */
+    for (col = 0; col < col_count; col++) {
+        selected_indices[col] = find_column_index(table, columns[col]);
+        if (selected_indices[col] < 0) {
+            return ERR_INVALID_QUERY;
+        }
+        strcpy(projected_headers[col], columns[col]);
+    }
+
+    for (row = 0; row < result->row_count; row++) {
+        char projected_row[MAX_COLUMNS][MAX_VALUE_LEN];
+
+        /* 한 row 안에서 요청한 컬럼만 임시 버퍼로 먼저 모읍니다. */
+        for (col = 0; col < col_count; col++) {
+            strcpy(projected_row[col], result->rows[row][selected_indices[col]]);
+        }
+        /* 그다음 원래 row 앞부분을 projection 결과로 덮어씁니다. */
+        for (col = 0; col < col_count; col++) {
+            strcpy(result->rows[row][col], projected_row[col]);
+        }
+    }
+
+    /* 출력 헤더도 요청 컬럼 목록에 맞춰 같이 줄여 줍니다. */
+    for (col = 0; col < col_count; col++) {
+        strcpy(result->headers[col], projected_headers[col]);
+    }
+    result->header_count = col_count;
+    return ERR_NONE;
+}
+
 /* 저장소를 처음 준비합니다.
    스키마 정보를 저장하고, .data 파일을 둘 디렉토리도 기억해 둡니다. */
 static int file_init(void *ctx, const TableDef *tables, int table_count) {
@@ -180,96 +295,81 @@ static int file_insert(void *ctx, const char *table_name,
     return ERR_NONE;
 }
 
-/* SELECT를 처리할 때는 <table>.data 파일을 읽고,
-   필요한 컬럼만 골라 ResultSet에 담습니다. */
-static int file_select_rows(void *ctx, const char *table_name,
-                            const char columns[][MAX_NAME_LEN], int col_count,
-                            int select_all, ResultSet *out) {
+/* 테이블 전체 row를 읽어오는 StorageOps 함수입니다.
+   executor가 WHERE, ORDER BY, UPDATE, DELETE를 처리할 때 사용합니다.
+   Phase 2부터는 SELECT도 필요하면 이 함수를 통해 full-row 기준 작업을 할 수 있습니다. */
+static int file_read_all_rows(void *ctx, const char *table_name, ResultSet *out) {
     FileStore *store = (FileStore *)ctx;
     const TableDef *table = find_table(store, table_name);
-    int selected_indices[MAX_COLUMNS];
-    int selected_count = 0;
-    char path[MAX_PATH_LEN];
-    FILE *fp;
-    char line[MAX_ROW_LINE_LEN];
-
-    result_set_reset(out);
 
     if (table == NULL) {
         return ERR_TABLE_NOT_FOUND;
     }
 
-    if (select_all) {
-        int col;
+    return load_full_table(store, table, out);
+}
 
-        /* SELECT * 는 스키마에 있는 모든 컬럼을 순서대로 사용한다는 뜻입니다. */
-        for (col = 0; col < table->column_count; col++) {
-            selected_indices[selected_count] = col;
-            strcpy(out->headers[selected_count], table->columns[col].name);
-            selected_count++;
-        }
-    } else {
-        int col;
+/* 바뀐 전체 row를 파일에 다시 씁니다.
+   DELETE나 UPDATE처럼 파일 전체를 다시 만들어야 할 때 사용합니다. */
+static int file_replace_rows(void *ctx, const char *table_name, const ResultSet *rows) {
+    FileStore *store = (FileStore *)ctx;
+    const TableDef *table = find_table(store, table_name);
+    char path[MAX_PATH_LEN];
+    FILE *fp;
+    int row;
 
-        /* SELECT name,age 는 그 컬럼 위치만 기억해 두겠다는 뜻입니다. */
-        for (col = 0; col < col_count; col++) {
-            int index = find_column_index(table, columns[col]);
-
-            if (index < 0) {
-                return ERR_INVALID_QUERY;
-            }
-
-            selected_indices[selected_count] = index;
-            strcpy(out->headers[selected_count], table->columns[index].name);
-            selected_count++;
-        }
+    if (table == NULL) {
+        return ERR_TABLE_NOT_FOUND;
     }
-
-    out->header_count = selected_count;
-
+    /* replace_rows는 "테이블 전체 모습"을 다시 쓰는 함수이므로
+       header 수가 있다면 schema 전체 컬럼 수와 맞아야 합니다. */
+    if (rows->header_count != 0 && rows->header_count != table->column_count) {
+        return ERR_INVALID_QUERY;
+    }
     if (build_table_path(store, table_name, path, sizeof(path)) != 0) {
         return ERR_FILE_OPEN;
     }
 
-    /* 데이터 파일이 아직 없으면 테이블은 있지만 아직 비어 있다고 봅니다. */
-    fp = fopen(path, "r");
+    /* w 모드로 열면 기존 내용을 비우고 새 테이블 내용으로 덮어씁니다. */
+    fp = fopen(path, "w");
     if (fp == NULL) {
-        if (errno == ENOENT) {
-            return ERR_NONE;
-        }
         return ERR_FILE_OPEN;
     }
 
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        char row_values[MAX_COLUMNS][MAX_VALUE_LEN];
-        int col;
-
-        /* ResultSet은 크기가 고정이라 너무 많은 행이 들어오면 막아야 합니다. */
-        if (out->row_count >= MAX_ROWS) {
-            fclose(fp);
-            return ERR_INVALID_QUERY;
-        }
-
-        /* 저장된 행 전체를 먼저 해독한 뒤,
-           필요한 컬럼만 골라 ResultSet으로 옮깁니다. */
-        if (parse_encoded_row(line, table->column_count, row_values) != 0) {
+    for (row = 0; row < rows->row_count; row++) {
+        /* 메모리 안의 row를 파일 포맷으로 다시 저장합니다. */
+        if (write_encoded_row(fp, rows->rows[row], table->column_count) != 0) {
             fclose(fp);
             return ERR_FILE_OPEN;
         }
-
-        for (col = 0; col < selected_count; col++) {
-            strcpy(out->rows[out->row_count][col], row_values[selected_indices[col]]);
-        }
-        out->row_count++;
-    }
-
-    if (ferror(fp)) {
-        fclose(fp);
-        return ERR_FILE_OPEN;
     }
 
     fclose(fp);
     return ERR_NONE;
+}
+
+/* SELECT를 처리할 때는 <table>.data 파일을 읽고,
+   필요한 컬럼만 골라 ResultSet에 담습니다.
+   즉 storage 계층 입장에서는 "파일 읽기 + 단순 projection"까지만 담당합니다. */
+static int file_select_rows(void *ctx, const char *table_name,
+                            const char columns[][MAX_NAME_LEN], int col_count,
+                            int select_all, ResultSet *out) {
+    FileStore *store = (FileStore *)ctx;
+    const TableDef *table = find_table(store, table_name);
+    int status;
+
+    if (table == NULL) {
+        return ERR_TABLE_NOT_FOUND;
+    }
+
+    /* 먼저 테이블 전체를 스키마 순서 그대로 읽어옵니다. */
+    status = load_full_table(store, table, out);
+    if (status != ERR_NONE) {
+        return status;
+    }
+
+    /* SELECT가 특정 컬럼만 원하면 여기서 projection 합니다. */
+    return project_result_in_place(out, table, columns, col_count, select_all);
 }
 
 /* 저장소에서 쓰던 메모리를 해제합니다. */
@@ -278,7 +378,9 @@ static void file_destroy(void *ctx) {
 }
 
 /* StorageOps vtable을 만들고,
-   각 함수 포인터를 파일 저장소 구현에 연결합니다. */
+   각 함수 포인터를 파일 저장소 구현에 연결합니다.
+   parser/executor는 이 포인터들만 호출하므로,
+   실제 저장 방식이 파일인지 다른 방식인지는 여기 아래에서만 결정됩니다. */
 StorageOps *file_storage_create(void) {
     StorageOps *ops = (StorageOps *)malloc(sizeof(*ops));
     FileStore *store;
@@ -298,6 +400,8 @@ StorageOps *file_storage_create(void) {
     ops->init = file_init;
     ops->insert = file_insert;
     ops->select_rows = file_select_rows;
+    ops->read_all_rows = file_read_all_rows;
+    ops->replace_rows = file_replace_rows;
     ops->destroy = file_destroy;
     return ops;
 }
