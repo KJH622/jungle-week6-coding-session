@@ -11,6 +11,7 @@
 - `insert/`: INSERT 실행/검증/에러 처리 검증
 - `select/`: SELECT 실행/출력/에러 처리 검증
 - `exit/`: 종료코드 집계/에러 출력 규칙 검증
+- `interactive/`: 인터랙티브 모드 UI/명령어 검증
 
 ## 현재 범위 (요구사항 v1 기준)
 - 실행 형식: `./sql_processor <sql_file>`
@@ -29,6 +30,7 @@
 ./member-jiun/tests/insert/run_insert_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/select/run_select_tests.sh ./member-jiun/src/sql_processor
 ./member-jiun/tests/exit/run_exit_tests.sh ./member-jiun/src/sql_processor
+./member-jiun/tests/interactive/run_interactive_tests.sh ./member-jiun/src/sql_processor
 ```
 
 ## 포함 케이스 (단위 테스트)
@@ -42,7 +44,7 @@
 - 디렉토리 경로 전달
 - 읽기 권한 없는 파일
 - 빈 SQL 파일
-- 인자 없음 (실패 동작 검증)
+- 인자 없음 (인터랙티브 진입 검증)
 - 인자 2개 이상 (실패 동작 검증)
 
 ## 포함 케이스 (초기화)
@@ -89,3 +91,9 @@
 - 에러 1건 이상 시 종료코드 `1`
 - 다중 에러 + 정상 문장 혼합 실행 시 계속 진행
 - 문장당 대표 에러 1개 출력
+
+## 포함 케이스 (인터랙티브 모드)
+- `.help` 출력
+- `.tables` 출력
+- `.schema <table>` 출력
+- 인터랙티브 `INSERT`/`SELECT` 실행

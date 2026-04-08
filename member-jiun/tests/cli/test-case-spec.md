@@ -37,12 +37,12 @@
   - `stdout` 비어 있음
   - `stderr` 비어 있음
 
-### 5) `cli_no_args_should_fail`
-- 시나리오: 인자 없이 실행
+### 5) `cli_no_args_enters_interactive_mode`
+- 시나리오: 인자 없이 실행하고 `.quit`를 입력
 - 검사:
-  - 종료코드 `1`
-  - `stdout` 비어 있음
-  - `stderr`가 정확히 `ERROR: file open failed`
+  - 종료코드 `0`
+  - `stdout`에 배너, `sql> ` 프롬프트, `Bye!`가 포함됨
+  - `stderr` 비어 있음
 
 ### 6) `cli_too_many_args_should_fail`
 - 시나리오: SQL 파일 인자를 2개 이상 전달

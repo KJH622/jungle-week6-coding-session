@@ -127,7 +127,11 @@ case_empty_sql_file() {
   return 0
 }
 
-case_no_args_should_fail() {
+strip_ansi() {
+  perl -pe 's/\e\[[0-9;]*[A-Za-z]//g'
+}
+
+case_no_args_enters_interactive_mode() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
@@ -135,17 +139,19 @@ case_no_args_should_fail() {
   local err_file="$tmp/stderr.txt"
 
   set +e
-  "$BIN" >"$out_file" 2>"$err_file"
+  printf '.quit\n' | "$BIN" >"$out_file" 2>"$err_file"
   local code=$?
   set -e
 
-  local expected_err="ERROR: file open failed"
-  local actual_err
-  actual_err="$(tr -d '\r' < "$err_file" | sed '/^$/d')"
+  local actual_out
+  actual_out="$(strip_ansi <"$out_file")"
 
-  [ "$code" -eq 1 ] || return 1
-  [ ! -s "$out_file" ] || return 1
-  [ "$actual_err" = "$expected_err" ] || return 1
+  [ "$code" -eq 0 ] || return 1
+  [ ! -s "$err_file" ] || return 1
+  printf '%s' "$actual_out" | grep -F "SQL Processor v1.0" >/dev/null
+  printf '%s' "$actual_out" | grep -F "Type .help for commands" >/dev/null
+  printf '%s' "$actual_out" | grep -F "sql> " >/dev/null
+  printf '%s' "$actual_out" | grep -F "Bye!" >/dev/null
 
   return 0
 }
@@ -184,7 +190,7 @@ run_case "cli_missing_file_returns_error" case_missing_file
 run_case "cli_directory_path_returns_error" case_directory_path
 run_case "cli_permission_denied_returns_error" case_permission_denied_file
 run_case "cli_empty_sql_file_success" case_empty_sql_file
-run_case "cli_no_args_should_fail" case_no_args_should_fail
+run_case "cli_no_args_enters_interactive_mode" case_no_args_enters_interactive_mode
 run_case "cli_too_many_args_should_fail" case_too_many_args_should_fail
 
 echo ""

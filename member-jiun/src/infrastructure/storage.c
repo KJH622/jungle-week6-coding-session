@@ -2,6 +2,7 @@
 
 #include "../shared/strvec.h"
 #include "../shared/text.h"
+#include "../shared/ui.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -84,7 +85,8 @@ int execute_insert(const InsertPlan *plan) {
   return 1;
 }
 
-int execute_select(const SelectPlan *plan) {
+int execute_select_with_options(const SelectPlan *plan, const SelectOutputOptions *options,
+                                int *row_count) {
   char path[512];
   snprintf(path, sizeof(path), "%s.data", plan->schema->name);
 
@@ -107,10 +109,16 @@ int execute_select(const SelectPlan *plan) {
   fclose(fp);
 
   if (rows.count == 0) {
+    if (row_count) {
+      *row_count = 0;
+    }
     strvec_free(&rows);
     return 1;
   }
 
+  if (options && options->interactive) {
+    fputs(COLOR_BOLD, stdout);
+  }
   for (int i = 0; i < plan->selected_count; i++) {
     const char *name = plan->schema->columns[plan->selected_idx[i]].name;
     fputs(name, stdout);
@@ -119,7 +127,11 @@ int execute_select(const SelectPlan *plan) {
     }
   }
   fputc('\n', stdout);
+  if (options && options->interactive) {
+    fputs(COLOR_RESET, stdout);
+  }
 
+  int emitted_rows = 0;
   for (int r = 0; r < rows.count; r++) {
     char tmp[32768];
     strncpy(tmp, rows.items[r], sizeof(tmp) - 1);
@@ -139,8 +151,16 @@ int execute_select(const SelectPlan *plan) {
       }
     }
     fputc('\n', stdout);
+    emitted_rows++;
   }
 
+  if (row_count) {
+    *row_count = emitted_rows;
+  }
   strvec_free(&rows);
   return 1;
+}
+
+int execute_select(const SelectPlan *plan) {
+  return execute_select_with_options(plan, NULL, NULL);
 }
